@@ -8,24 +8,23 @@ logger = logging.getLogger(__name__)
 
 class OPGGClient:
     def __init__(self):
-        # In v3, OPGG() is likely async-friendly. In v2, we avoid it due to asyncio.run()
+        self._headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Origin": "https://www.op.gg",
+            "Referer": "https://www.op.gg/"
+        }
         if not IS_V2:
             try:
                 self.opgg_instance = OPGG()
-                self._headers = self.opgg_instance._headers
                 # v3 might have different attributes, we'll try to map them
                 self._search_api_url = getattr(self.opgg_instance, "SEARCH_API_URL", None)
                 self._summary_api_url = getattr(self.opgg_instance, "SUMMARY_API_URL", None)
             except Exception:
                 self.opgg_instance = None
-                self._headers = {"User-Agent": "Mozilla/5.0"}
-            self._headers = getattr(self.opgg_instance, "_headers", {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            })
         else:
-            self._headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
+            self.opgg_instance = None
         self._bypass_api_url = "https://lol-api-summoner.op.gg/api"
         if not getattr(self, "_search_api_url", None):
             self._search_api_url = f"{self._bypass_api_url}/v3/{{region}}/summoners?riot_id={{summoner_name}}%23{{tagline}}"
@@ -195,10 +194,11 @@ class OPGGClient:
                     tier = tier_info.get('tier', 'UNRANKED').upper()
                     division = tier_info.get('division') or tier_info.get('rank') or ""
                     lp = tier_info.get('lp', 0)
-                    wins = stat.get('win', 0)
-                    losses = stat.get('lose', 0)
+                    # Try plural 'wins', 'losses' first, then 'win', 'lose'. Use None check for 0 handling.
+                    wins = stat.get('wins') if stat.get('wins') is not None else stat.get('win', 0)
+                    losses = stat.get('losses') if stat.get('losses') is not None else stat.get('lose', 0)
                     
-                    logger.info(f"Extracted: tier={tier}, division={division}, lp={lp}")
+                    logger.info(f"Extracted: tier={tier}, division={division}, lp={lp}, W={wins}, L={losses}")
                     return tier, self.division_to_roman(division), lp, wins, losses
             
             # If no specific queue type was matched, try to find any ranked data
@@ -209,9 +209,9 @@ class OPGGClient:
                     if tier and tier != 'UNRANKED':
                         division = tier_info.get('division') or tier_info.get('rank') or ""
                         lp = tier_info.get('lp', 0)
-                        wins = stat.get('win', 0)
-                        losses = stat.get('lose', 0)
-                        logger.info(f"Found ranked data in stat {i}: {tier} {division} {lp}LP")
+                        wins = stat.get('wins') if stat.get('wins') is not None else stat.get('win', 0)
+                        losses = stat.get('losses') if stat.get('losses') is not None else stat.get('lose', 0)
+                        logger.info(f"Found ranked data in stat {i}: {tier} {division} {lp}LP (W={wins}, L={losses})")
                         return tier, self.division_to_roman(division), lp, wins, losses
             
             logger.warning(f"No SOLORANKED stats found in league_stats")
@@ -235,9 +235,12 @@ class OPGGClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=self._headers) as resp:
                     logger.info(f"Renewal request status: {resp.status}")
-                    if resp.status in [200, 201, 202]:
-                        data = await resp.json()
-                        logger.info(f"Renewal successful: {data.get('data', {}).get('message', 'Success')}")
+                    if resp.status in [200, 201, 202, 204]:
+                        try:
+                            data = await resp.json()
+                            logger.info(f"Renewal successful: {data.get('data', {}).get('message', 'Success')}")
+                        except Exception:
+                            logger.info(f"Renewal request sent successfully (status: {resp.status})")
                         return True
                     else:
                         logger.warning(f"Renewal request failed with status {resp.status}")
