@@ -187,7 +187,7 @@ class OPGGClient:
                 logger.info(f"Stat {i}: game_type='{game_type}', tier_info={stat.get('tier_info')}")
                 
                 # Check for various Solo Queue identifiers or just take the first ranked one
-                if game_type in ['SOLORANKED', 'RANKED_SOLO_5X5', 'SOLO', 'RANKED_SOLO_5X5']:
+                if game_type in ['SOLORANKED', 'RANKED_SOLO_5X5', 'SOLO']:
                     tier_info = stat.get('tier_info') or stat
                     logger.info(f"tier_info keys: {list(tier_info.keys()) if isinstance(tier_info, dict) else tier_info}")
                     
@@ -228,12 +228,22 @@ class OPGGClient:
         """Request OP.GG to renew/refresh summoner data (Async)."""
         try:
             region_str = "jp"
-            # Use the renewal endpoint as identified in the library
-            url = f"https://lol-web-api.op.gg/api/v1.0/internal/bypass/summoners/{region_str}/{summoner.summoner_id}/renewal"
+            # Some environments have DNS issues with lol-web-api.op.gg. 
+            # Using www.op.gg as it is the most stable host for internal/bypass endpoints.
+            url = f"https://www.op.gg/api/v1.0/internal/bypass/summoners/{region_str}/{summoner.summoner_id}/renewal"
             
-            logger.info(f"Requesting data renewal for summoner {summoner.summoner_id} (URL: {url})")
+            # Use specific referer for this summoner
+            game_name = getattr(summoner, 'game_name', '')
+            tagline = getattr(summoner, 'tagline', '')
+            headers = self._headers.copy()
+            headers["Referer"] = f"https://www.op.gg/summoners/jp/{game_name}-{tagline}"
+
+            if hasattr(summoner, 'renewable_at'):
+                logger.info(f"Renewal check: renewable_at={summoner.renewable_at}, current_time={datetime.now()}")
+            
+            logger.info(f"Requesting data renewal for {game_name}#{tagline} (URL: {url})")
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=self._headers) as resp:
+                async with session.post(url, headers=headers) as resp:
                     logger.info(f"Renewal request status: {resp.status}")
                     if resp.status in [200, 201, 202, 204]:
                         try:
