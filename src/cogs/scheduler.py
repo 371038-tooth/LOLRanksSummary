@@ -681,9 +681,7 @@ class Scheduler(commands.Cog):
         col_widths = [0.12, 0.20, 0.40, 0.28]
         return generate_report_image(header, table_rows, f"{rid} Report (Last {period_days} Days)", col_widths=col_widths)
 
-    async def generate_report_image_payload_sync(self, users, today: date, period_days: int, period_type: str = 'daily') -> io.BytesIO:
-        """Deprecated: Use _generate_report_image_payload_impl instead."""
-        pass
+
         
     def _generate_report_image_payload_impl(self, data_map, today: date, period_days: int, period_type: str = 'daily') -> io.BytesIO:
         """Generate table image for all users (Sync implementation)."""
