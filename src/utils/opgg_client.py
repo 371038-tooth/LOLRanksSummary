@@ -228,15 +228,15 @@ class OPGGClient:
         """Request OP.GG to renew/refresh summoner data (Async)."""
         try:
             region_str = "jp"
-            # Some environments have DNS issues with lol-web-api.op.gg. 
-            # Using www.op.gg as it is the most stable host for internal/bypass endpoints.
-            url = f"https://www.op.gg/api/v1.0/internal/bypass/summoners/{region_str}/{summoner.summoner_id}/renewal"
+            # Verified endpoint via test script
+            url = f"https://lol-api-summoner.op.gg/api/{region_str}/summoners/{summoner.summoner_id}/renewal"
             
             # Use specific referer for this summoner
             game_name = getattr(summoner, 'game_name', '')
             tagline = getattr(summoner, 'tagline', '')
             headers = self._headers.copy()
             headers["Referer"] = f"https://www.op.gg/summoners/jp/{game_name}-{tagline}"
+            headers["Origin"] = "https://www.op.gg"
 
             if hasattr(summoner, 'renewable_at'):
                 logger.info(f"Renewal check: renewable_at={summoner.renewable_at}, current_time={datetime.now()}")
@@ -248,7 +248,12 @@ class OPGGClient:
                     if resp.status in [200, 201, 202, 204]:
                         try:
                             data = await resp.json()
-                            logger.info(f"Renewal successful: {data.get('data', {}).get('message', 'Success')}")
+                            # Handle response format like {'data': {'finish': False, 'delay': 1000, ...}}
+                            resp_data = data.get('data', {})
+                            msg = resp_data.get('message', 'Success')
+                            finish = resp_data.get('finish')
+                            delay = resp_data.get('delay')
+                            logger.info(f"Renewal response: message='{msg}', finish={finish}, delay={delay}")
                         except Exception:
                             logger.info(f"Renewal request sent successfully (status: {resp.status})")
                         return True
