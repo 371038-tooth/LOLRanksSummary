@@ -473,6 +473,11 @@ class Scheduler(commands.Cog):
             except Exception as e:
                 logger.error(f"Failed to fetch rank for user {rid}: {e}")
                 results['failed'] += 1
+            
+            # Progress logging
+            current_total = results['success'] + results['failed']
+            if current_total % 5 == 0 or current_total == results['total']:
+                logger.info(f"Progress: {current_total}/{results['total']} users processed.")
                 
         logger.info(f"Global rank collection completed: {results}")
         return results
@@ -500,12 +505,7 @@ class Scheduler(commands.Cog):
             return
 
         # 1. Fetch latest data for all users before generating report
-        for user in users:
-            try:
-                await self.fetch_and_save_rank(user)
-                await asyncio.sleep(1) # Basic rate limiting
-            except Exception as e:
-                logger.error(f"Failed to refresh user {user['riot_id']} in daily report: {e}")
+        # ユーザーの要望により、自動fetchは行わず既存データのみを使用するように変更
 
         today = date.today()
         
@@ -573,8 +573,8 @@ class Scheduler(commands.Cog):
                 
             # Trigger renewal to ensure data is fresh
             await opgg_client.renew_summoner(summoner)
-            # Short sleep to give OP.GG a moment to start/process the update from Riot
-            await asyncio.sleep(2)
+            # Renewal can take some time on OP.GG side. Increased sleep to 8s for reliability.
+            await asyncio.sleep(8)
 
             # Get Rank
             tier, rank, lp, wins, losses = await opgg_client.get_rank_info(summoner)
