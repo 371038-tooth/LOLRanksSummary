@@ -1,8 +1,11 @@
-
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import matplotlib
-from datetime import datetime, date, timedelta
+# Use Agg backend for thread safety and headless environments
+matplotlib.use('Agg')
+
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+import matplotlib.dates as mdates
+from datetime import date, timedelta
 import io
 import os
 
@@ -76,10 +79,13 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     if not user_data:
         return None
 
-    plt.figure(figsize=(12, 7))
-    ax = plt.gca()
+    # Use Figure object directly instead of pyplot state
+    fig = Figure(figsize=(12, 7))
+    FigureCanvasAgg(fig) # Attach canvas
+    ax = fig.add_subplot(111)
+    
     ax.set_facecolor('#2c3e50')
-    plt.gcf().set_facecolor('#34495e')
+    fig.set_facecolor('#34495e')
 
     # Color palette
     colors = ['#1abc9c', '#3498db', '#9b59b6', '#f1c40f', '#e67e22', '#e74c3c', '#ecf0f1', '#95a5a6']
@@ -123,7 +129,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         name = riot_id.split('#')[0]
         
         # Plot line
-        plt.plot(dates, values, marker='o', linestyle='-', color=color, linewidth=2, markersize=5, label=name)
+        ax.plot(dates, values, marker='o', linestyle='-', color=color, linewidth=2, markersize=5, label=name)
         
         # Add LP annotations only for the latest point if multiple users, or all points if single user
         if len(user_data) == 1:
@@ -140,16 +146,15 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     # Title and Labels
     title = f"Rank History{title_suffix} ({period_type})"
-    plt.title(title, fontsize=18, color='white', pad=25, weight='bold')
-    plt.xlabel("Date", fontsize=12, color='white', labelpad=10)
-    plt.ylabel("Rank", fontsize=12, color='white', labelpad=10)
+    ax.set_title(title, fontsize=18, color='white', pad=25, weight='bold')
+    ax.set_xlabel("Date", fontsize=12, color='white', labelpad=10)
+    ax.set_ylabel("Rank", fontsize=12, color='white', labelpad=10)
 
     # Tick colors and sizes
     ax.tick_params(colors='white', labelsize=10)
     for spine in ax.spines.values():
         spine.set_color('#7f8c8d')
 
-    # Date Formatting
     # Date Formatting
     from matplotlib.ticker import FuncFormatter, FixedLocator
 
@@ -175,7 +180,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 return f"{d.month}月"
             ax.xaxis.set_major_formatter(FuncFormatter(format_monthly))
 
-    plt.xticks(rotation=45)
+    # Rotation should be set on the axes tick labels
+    # plt.xticks(rotation=45) -> ax.tick_params(axis='x', rotation=45)
+    ax.tick_params(axis='x', rotation=45)
 
     # Y-axis range and labels
     if all_values:
@@ -196,16 +203,16 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     # Legend
     if len(user_data) > 1:
-        leg = plt.legend(loc='upper left', bbox_to_anchor=(1, 1), facecolor='#34495e', edgecolor='#7f8c8d')
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1, 1), facecolor='#34495e', edgecolor='#7f8c8d')
         for text in leg.get_texts():
             text.set_color('white')
 
-    plt.grid(True, linestyle='--', alpha=0.1, color='#95a5a6')
+    ax.grid(True, linestyle='--', alpha=0.1, color='#95a5a6')
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=110)
+    # Use fig.savefig instead of plt.savefig
+    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=110)
     buf.seek(0)
-    plt.close()
     return buf
 
 def generate_report_image(headers: List[str], data: List[List[Any]], title: str, col_widths: List[float] = None) -> io.BytesIO:
@@ -220,11 +227,14 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     header_height = 0.6
     fig_height = header_height + (len(data) * row_height) + 1.0
     
-    # Calculate column widths (simple estimate)
+    # Use Figure object directly
     # Riot ID column is usually longest
-    fig, ax = plt.subplots(figsize=(14, max(4, fig_height)))
+    fig = Figure(figsize=(14, max(4, fig_height)))
+    FigureCanvasAgg(fig) # Attach canvas
+    ax = fig.add_subplot(111)
+    
     ax.axis('off')
-    plt.gcf().set_facecolor('#34495e')
+    fig.set_facecolor('#34495e')
 
     # Color configuration
     header_color = '#2c3e50'
@@ -263,10 +273,10 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
                 # Add a small offset for padding
                 cell.get_text().set_position((0.05, 0.5))
 
-    plt.title(title, fontsize=18, color=text_color, pad=30, weight='bold')
+    ax.set_title(title, fontsize=18, color=text_color, pad=30, weight='bold')
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor='#34495e')
+    # Use fig.savefig with facecolor
+    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor='#34495e')
     buf.seek(0)
-    plt.close()
     return buf
