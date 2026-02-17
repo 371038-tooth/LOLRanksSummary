@@ -238,7 +238,10 @@ class Scheduler(commands.Cog):
         try:
             if riot_id.lower() == "all":
                 results = await self.fetch_all_users_rank(server_id=interaction.guild.id)
-                await interaction.followup.send(f"✅ このサーバーの全ユーザーのランク情報を取得しました: 成功 {results['success']}, 失敗 {results['failed']} (合計 {results['total']})")
+                msg_content = f"✅ このサーバーの全ユーザーのランク情報を取得しました: 成功 {results['success']}, 失敗 {results['failed']} (合計 {results['total']})"
+                if results['failed'] > 0 and results.get('failed_list'):
+                     msg_content += f"\n❌ 失敗したユーザー: {', '.join(results['failed_list'])}"
+                await interaction.followup.send(msg_content)
                 return
 
             # Find user in DB
@@ -431,8 +434,8 @@ class Scheduler(commands.Cog):
         return t_str, channel_id, period_type, o_str, None
 
     async def fetch_all_users_rank(self, backfill: bool = False, server_id: int = None):
-        """Fetch current rank and optionally backfill history."""
-        logger.info(f"Starting rank collection (backfill={backfill}, server_id={server_id})...")
+        """Fetch current rank for all users with concurrent renewal."""
+        logger.info(f"Starting concurrent rank collection (backfill={backfill}, server_id={server_id})...")
         today = date.today()
         
         if server_id:
@@ -442,45 +445,102 @@ class Scheduler(commands.Cog):
         
         results = {'total': len(users), 'success': 0, 'failed': 0}
         
+        # 1. Request Renewal for ALL users concurrently
+        logger.info(f"Step 1: Requesting renewal for {len(users)} users...")
+        renewal_tasks = []
         for user in users:
-            uid = user['discord_id']
-            rid = user['riot_id']
+            renewal_tasks.append(self.request_renewal_for_user(user))
+        
+        # Wait for all renewal requests to initiate
+        # We process them in parallel to speed up the requests
+        renewal_results = await asyncio.gather(*renewal_tasks, return_exceptions=True)
+        
+        success_users = []
+        formatted_failed_users = []
+
+        # Check renewal results
+        for i, res in enumerate(renewal_results):
+            user = users[i]
+            if isinstance(res, Exception):
+                logger.error(f"Renewal failed for {user['riot_id']}: {res}")
+                formatted_failed_users.append(user['riot_id'])
+            elif res:
+                success_users.append(user)
+            else:
+                formatted_failed_users.append(user['riot_id'])
+
+        logger.info(f"Renewal requests sent. Successful: {len(success_users)}, Failed: {len(formatted_failed_users)}")
+
+        # 2. Wait for OPGG to process renewals (10 seconds total)
+        if success_users:
+            logger.info("Step 2: Waiting 10 seconds for OPGG processing...")
+            await asyncio.sleep(10)
+
+        # 3. Fetch data for successful users
+        logger.info(f"Step 3: Fetching data for {len(success_users)} users...")
+        
+        for user in success_users:
             try:
-                # 1. Fetch Current
-                success = await self.fetch_and_save_rank(user, today)
+                # Fetch without renewal (already done)
+                success = await self.fetch_and_save_rank(user, today, skip_renewal=True)
                 if success:
                     results['success'] += 1
                 else:
                     results['failed'] += 1
+                    formatted_failed_users.append(user['riot_id'])
                 
-                # 2. Backfill if requested
-                if backfill and '#' in rid:
-                    name, tag = rid.split('#')
-                    summoner = await opgg_client.get_summoner(name, tag, Region.JP)
-                    if summoner:
-                        history = await opgg_client.get_tier_history(summoner.summoner_id, Region.JP)
-                        for entry in history:
-                            h_date = entry['updated_at'].date()
-                            # Avoid overwriting today's report
-                            if h_date < today:
-                                await db.add_rank_history(
-                                    user['server_id'], uid, rid, 
-                                    entry['tier'], entry['rank'], entry['lp'],
-                                    0, 0, h_date
-                                )
-                
-                await asyncio.sleep(1) # Base rate limiting
+                # Backfill logic (if requested)
+                if backfill and success:
+                    await self._backfill_user(user, today)
+
+                await asyncio.sleep(1) # Mild rate limit for fetching
             except Exception as e:
-                logger.error(f"Failed to fetch rank for user {rid}: {e}")
+                logger.error(f"Failed to fetch data for {user['riot_id']}: {e}")
                 results['failed'] += 1
-            
-            # Progress logging
-            current_total = results['success'] + results['failed']
-            if current_total % 5 == 0 or current_total == results['total']:
-                logger.info(f"Progress: {current_total}/{results['total']} users processed.")
-                
+                formatted_failed_users.append(user['riot_id'])
+
+        # Add initial failed users (renewal failure) to result count
+        # results['failed'] already contains fetch failures from loop above
+        results['failed'] += (len(users) - len(success_users))
+        results['failed_list'] = list(set(formatted_failed_users)) # unique list
+
         logger.info(f"Global rank collection completed: {results}")
         return results
+
+    async def request_renewal_for_user(self, user):
+        """Helper to valid user and request renewal."""
+        riot_id = user['riot_id']
+        if '#' not in riot_id: return False
+        name, tag = riot_id.split('#', 1)
+        
+        try:
+            summoner = await opgg_client.get_summoner(name, tag, Region.JP)
+            if not summoner: return False
+            return await opgg_client.renew_summoner(summoner)
+        except Exception as e:
+            logger.error(f"Error requesting renewal for {riot_id}: {e}")
+            return False
+
+    async def _backfill_user(self, user, today):
+        """Helper for backfilling history."""
+        try:
+            uid = user['discord_id']
+            rid = user['riot_id']
+            if '#' not in rid: return
+            name, tag = rid.split('#')
+            summoner = await opgg_client.get_summoner(name, tag, Region.JP)
+            if summoner:
+                history = await opgg_client.get_tier_history(summoner.summoner_id, Region.JP)
+                for entry in history:
+                    h_date = entry['updated_at'].date()
+                    if h_date < today:
+                        await db.add_rank_history(
+                            user['server_id'], uid, rid, 
+                            entry['tier'], entry['rank'], entry['lp'],
+                            0, 0, h_date
+                        )
+        except Exception as e:
+            logger.error(f"Backfill error for {rid}: {e}")
 
     async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table'):
         guild = self.bot.get_guild(server_id)
@@ -552,7 +612,7 @@ class Scheduler(commands.Cog):
             await channel.send(f"レポート生成中にエラーが発生しました: {e}")
             logger.error(f"Error in scheduled report: {e}", exc_info=True)
 
-    async def fetch_and_save_rank(self, user, target_date=None):
+    async def fetch_and_save_rank(self, user, target_date=None, skip_renewal=False):
         if target_date is None:
             target_date = date.today()
 
@@ -565,16 +625,17 @@ class Scheduler(commands.Cog):
         
         # Get Summoner
         try:
-            logger.info(f"Fetching rank for {riot_id} on {target_date} (Server: {user.get('server_id', 'Unknown')})")
+            logger.info(f"Fetching rank for {riot_id} on {target_date} (Server: {user.get('server_id', 'Unknown')}, SkipRenewal: {skip_renewal})")
             summoner = await opgg_client.get_summoner(name, tag, Region.JP)
             if not summoner:
                 logger.warning(f"User not found on OPGG: {riot_id}")
                 return False
                 
-            # Trigger renewal to ensure data is fresh
-            await opgg_client.renew_summoner(summoner)
-            # Renewal can take some time on OP.GG side. Increased sleep to 8s for reliability.
-            await asyncio.sleep(8)
+            if not skip_renewal:
+                # Trigger renewal to ensure data is fresh
+                await opgg_client.renew_summoner(summoner)
+                # Renewal can take some time on OP.GG side. Increased sleep to 8s for reliability.
+                await asyncio.sleep(8)
 
             # Get Rank
             tier, rank, lp, wins, losses = await opgg_client.get_rank_info(summoner)
