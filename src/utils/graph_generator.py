@@ -11,6 +11,10 @@ import io
 import os
 from typing import List, Dict, Any
 
+import logging
+# Silence matplotlib font warnings
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+
 # --- Style Constants ---
 BG_COLOR = '#0b0f19'
 AXIS_COLOR = '#334155'
@@ -21,6 +25,7 @@ ROW_EVEN = '#111827'
 UP_COLOR = '#4ade80'   # Emerald-400
 DOWN_COLOR = '#fb7185' # Rose-400
 COLORS = ['#06b6d4', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#3b82f6', '#14b8a6']
+APEX_TIERS = {"MASTER", "GRANDMASTER", "CHALLENGER"}
 
 # Set Japanese font for Windows and Linux (Railway)
 # Use local font file for better portability
@@ -51,7 +56,7 @@ def rank_to_numeric(tier: str, division: str, lp: int) -> int:
     tier_val = TIER_ORDER.index(tier) * 400
     
     # Apex tiers don't have divisions
-    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
+    if tier in APEX_TIERS:
         return tier_val + lp
     
     div_val = DIV_MAP.get(division, 0) * 100
@@ -66,7 +71,7 @@ def numeric_to_rank(val: int) -> str:
     tier = TIER_ORDER[tier_idx]
     tier_offset = val % 400
     
-    if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
+    if tier in APEX_TIERS:
         if tier_offset == 0:
             return f"{tier}"
         else:
@@ -212,7 +217,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         max_tier_idx = int(max_v // 400)
         if max_tier_idx < len(TIER_ORDER) - 1:
             tier_name = TIER_ORDER[max_tier_idx]
-            if tier_name in ["MASTER", "GRANDMASTER"]:
+            if tier_name in {"MASTER", "GRANDMASTER"}:
                 # Force top to next tier boundary
                 y_max = (max_tier_idx + 1) * 400
         ax.set_ylim(y_min, y_max)
@@ -247,7 +252,9 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     header_height = 0.8
     fig_height = header_height + (len(data) * row_height) + 1.2
     
-    fig = Figure(figsize=(14, max(4, fig_height)), facecolor=BG_COLOR)
+    # Dynamic figsize based on number of columns
+    base_width = max(14, len(headers) * 1.8)
+    fig = Figure(figsize=(base_width, max(4, fig_height)), facecolor=BG_COLOR)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax.axis('off')
@@ -267,17 +274,15 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     table.auto_set_font_size(False)
     table.set_fontsize(12)
     
-    # Auto-adjust column widths only if not explicitly provided
-    if col_widths is None:
-        table.auto_set_column_width(col=list(range(len(headers))))
+    # We will call auto_set_column_width AFTER setting padding for each cell
     table.scale(1.0, 3.5) 
 
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor(HEADER_BG)
         cell.set_linewidth(0.5)
-        # Increase horizontal padding to prevent text from touching edges
+        # Increase padding to prevent text from touching edges
         cell.set_text_props(ha='center', va='center')
-        cell.PAD = 0.05 # standard padding for auto_set_column_width
+        cell.PAD = 0.1 # increased padding (default is usually too small)
         
         if row == 0:
             cell.set_facecolor(HEADER_BG)
@@ -299,9 +304,12 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
 
             if col == 0:
                 cell.get_text().set_horizontalalignment('left')
-                # For left alignment after auto-width, we rely on the cell.PAD and text pos
-                # We need to give it a bit more shift to the right to not touch the frame
+                # Add offset to prevent touching the left frame
                 cell.get_text().set_position((0.05, 0.5))
+
+    # Finally perform auto column adjustment if no fixed widths provided
+    if col_widths is None:
+        table.auto_set_column_width(col=list(range(len(headers))))
 
     ax.set_title(title, fontsize=24, color='white', pad=45, weight='bold')
 
