@@ -115,7 +115,7 @@ def calculate_diff_text(old_data: dict, new_data: dict, include_prefix: bool = T
 def shorten_tier(tier: str) -> str:
     """Shorten Tier name for display (e.g. DIAMOND -> D)."""
     mapping = {
-        "IRON": "I",
+        "IRON": "Ir",
         "BRONZE": "B",
         "SILVER": "S",
         "GOLD": "G",

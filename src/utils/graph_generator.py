@@ -83,6 +83,33 @@ def numeric_to_rank(val: int) -> str:
     
     return f"{tier} {div}"
 
+def _aggregate_rows(rows: List[Dict[str, Any]], period_type: str) -> List[Dict[str, Any]]:
+    """Aggregate rows by period (weekly/monthly) and filter to latest year."""
+    if not rows:
+        return []
+    
+    if period_type == 'weekly':
+        weeks = {}
+        for r in rows:
+            year, week, _ = r['fetch_date'].isocalendar()
+            weeks[(year, week)] = r
+        rows = sorted(weeks.values(), key=lambda x: x['fetch_date'])
+    elif period_type == 'monthly':
+        months = {}
+        for r in rows:
+            key = (r['fetch_date'].year, r['fetch_date'].month)
+            months[key] = r
+        rows = sorted(months.values(), key=lambda x: x['fetch_date'])
+
+    latest_date = max(r['fetch_date'] for r in rows)
+    earliest_date = min(r['fetch_date'] for r in rows)
+    if earliest_date.year < latest_date.year:
+        start_filter = date(latest_date.year, 1, 1)
+        rows = [r for r in rows if r['fetch_date'] >= start_filter]
+
+    return rows
+
+
 def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type: str, title_suffix: str = "") -> io.BytesIO:
     """
     Generate a rank history graph for one or more users with a stylish neon dark-mode design.
@@ -97,32 +124,21 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     
     all_dates = []
     all_values = []
+    today_obj = date.today()
     
-    for i, (riot_id, rows) in enumerate(user_data.items()):
-        if not rows:
-            continue
-
-        # Aggregation logic...
-        if period_type == 'weekly':
-            weeks = {}
-            for r in rows:
-                year, week, _ = r['fetch_date'].isocalendar()
-                weeks[(year, week)] = r
-            rows = sorted(weeks.values(), key=lambda x: x['fetch_date'])
-        elif period_type == 'monthly':
-            months = {}
-            for r in rows:
-                key = (r['fetch_date'].year, r['fetch_date'].month)
-                months[key] = r
-            rows = sorted(months.values(), key=lambda x: x['fetch_date'])
-
-        latest_date = max(r['fetch_date'] for r in rows)
-        earliest_date = min(r['fetch_date'] for r in rows)
-        if earliest_date.year < latest_date.year:
-            start_filter = date(latest_date.year, 1, 1)
-            rows = [r for r in rows if r['fetch_date'] >= start_filter]
-            if not rows: continue
-
+    # Pre-aggregate all user data once
+    aggregated_data = {}
+    for riot_id, rows in user_data.items():
+        processed = _aggregate_rows(rows, period_type)
+        if processed:
+            aggregated_data[riot_id] = processed
+    
+    # Draw lines
+    has_today = False
+    latest_fetch_time = None
+    label_items = []
+    
+    for i, (riot_id, rows) in enumerate(aggregated_data.items()):
         dates = [r['fetch_date'] for r in rows]
         values = [rank_to_numeric(r['tier'], r['rank'], r['lp']) for r in rows]
         all_dates.extend(dates)
@@ -138,59 +154,24 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         ax.plot(dates, values, color=color, linewidth=2.5, linestyle='-', marker='o', 
                 markersize=4, markerfacecolor='white', markeredgewidth=1.5, zorder=5, label=name)
         
-        # Labels
-        if len(user_data) == 1:
+        # Single-user LP labels
+        if len(aggregated_data) == 1:
             for j, r in enumerate(rows):
                 ax.annotate(f"{r['lp']}LP", (dates[j], values[j]), 
                             textcoords="offset points", xytext=(0, 10), ha='center', 
                             fontsize=9, color=TEXT_COLOR, alpha=0.9, weight='bold')
-        # (Multi-user labels are handled after the loop to prevent overlap)
 
-    # Collect labels and track latest fetch time
-    has_today = False
-    latest_fetch_time = None
-    today_obj = date.today()
-    label_items = []
-
-
-    for i, (riot_id, rows) in enumerate(user_data.items()):
-        if not rows: continue
-        
-        # 1. Aggregate/Filter rows exactly as done in the drawing loop
-        current_rows = rows
-        if period_type == 'weekly':
-            weeks = {}
-            for r in current_rows:
-                year, week, _ = r['fetch_date'].isocalendar()
-                weeks[(year, week)] = r
-            current_rows = sorted(weeks.values(), key=lambda x: x['fetch_date'])
-        elif period_type == 'monthly':
-            months = {}
-            for r in current_rows:
-                key = (r['fetch_date'].year, r['fetch_date'].month)
-                months[key] = r
-            current_rows = sorted(months.values(), key=lambda x: x['fetch_date'])
-
-        latest_d = max(r['fetch_date'] for r in current_rows)
-        if latest_d.year < today_obj.year:
-            start_filter = date(latest_d.year, 1, 1)
-            current_rows = [r for r in current_rows if r['fetch_date'] >= start_filter]
-        
-        if not current_rows: continue
-
-        # 2. Track latest fetch time for title
-        for r in current_rows:
+        # Track latest fetch time for title
+        for r in rows:
             if r['fetch_date'] == today_obj:
                 has_today = True
-                if 'reg_date' in r:
+                if 'reg_date' in r and r['reg_date'] is not None:
                     if latest_fetch_time is None or r['reg_date'] > latest_fetch_time:
                         latest_fetch_time = r['reg_date']
 
-        # 3. Prepare label data (using aggregated rows)
-        if len(user_data) > 1:
-            name = riot_id.split('#')[0]
-            color = COLORS[i % len(COLORS)]
-            last_r = current_rows[-1]
+        # Prepare multi-user label data
+        if len(aggregated_data) > 1:
+            last_r = rows[-1]
             label_items.append({
                 'name': name,
                 'lp': last_r['lp'],
@@ -200,7 +181,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
             })
 
     # Draw multi-user labels with overlap adjustment
-    if len(user_data) > 1:
+    if len(aggregated_data) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
         THRESHOLD = 25 # Minimum vertical gap in rank points
         for i in range(1, len(label_items)):
@@ -280,7 +261,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         ax.set_yticks(y_ticks)
         ax.set_yticklabels(y_labels, fontsize=10)
 
-    if len(user_data) > 1:
+    if len(aggregated_data) > 1:
         # Move legend outside the plot area to the right
         leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), 
                          facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
@@ -291,6 +272,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120)
     buf.seek(0)
+    del fig  # Release Figure resources to prevent memory leak
     return buf
 
 def generate_report_image(headers: List[str], data: List[List[Any]], title: str, col_widths: List[float] = None) -> io.BytesIO:
@@ -368,4 +350,5 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor=BG_COLOR)
     buf.seek(0)
+    del fig  # Release Figure resources to prevent memory leak
     return buf

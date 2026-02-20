@@ -5,20 +5,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from src.database import db
 from src.utils import rank_calculator
 from src.utils.opgg_client import opgg_client
-from src.utils.opgg_compat import Region, OPGG, IS_V2
+from src.utils.opgg_compat import Region
 from src.utils.graph_generator import generate_rank_graph, generate_report_image
 from datetime import datetime, date, timedelta
 import asyncio
 import io
 import logging
-from tabulate import tabulate
 
 logger = logging.getLogger(__name__)
 
 class Scheduler(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone='Asia/Tokyo')
         self.scheduler.start()
 
     async def cog_load(self):
@@ -487,7 +486,6 @@ class Scheduler(commands.Cog):
                 if success:
                     results['success'] += 1
                 else:
-                    results['failed'] += 1
                     formatted_failed_users.append(user['riot_id'])
                 
                 # Backfill logic (if requested)
@@ -497,12 +495,10 @@ class Scheduler(commands.Cog):
                 await asyncio.sleep(1) # Mild rate limit for fetching
             except Exception as e:
                 logger.error(f"Failed to fetch data for {user['riot_id']}: {e}")
-                results['failed'] += 1
                 formatted_failed_users.append(user['riot_id'])
 
-        # Add initial failed users (renewal failure) to result count
-        # results['failed'] already contains fetch failures from loop above
-        results['failed'] += (len(users) - len(success_users))
+        # Calculate failed count: total - success (avoids double-counting)
+        results['failed'] = results['total'] - results['success']
         results['failed_list'] = list(set(formatted_failed_users)) # unique list
 
         logger.info(f"Global rank collection completed: {results}")

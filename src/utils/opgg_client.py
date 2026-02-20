@@ -15,6 +15,7 @@ class OPGGClient:
             "Origin": "https://www.op.gg",
             "Referer": "https://www.op.gg/"
         }
+        self._session = None
         if not IS_V2:
             try:
                 self.opgg_instance = OPGG()
@@ -30,6 +31,18 @@ class OPGGClient:
             self._search_api_url = f"{self._bypass_api_url}/v3/{{region}}/summoners?riot_id={{summoner_name}}%23{{tagline}}"
         if not getattr(self, "_summary_api_url", None):
             self._summary_api_url = f"{self._bypass_api_url}/{{region}}/summoners/{{summoner_id}}/summary"
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create a shared aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers=self._headers)
+        return self._session
+
+    async def close(self):
+        """Close the shared aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _prepare_opgg_params(self, url):
         return {
@@ -94,19 +107,18 @@ class OPGGClient:
 
             # 2. Try raw aiohttp request (Last resort)
             logger.info(f"Trying raw aiohttp search for {query}")
-            async with aiohttp.ClientSession() as session:
-                url = url_template
-                headers = self._headers
-                async with session.get(url, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        results = data.get('data', [])
-                        if results:
-                            logger.info(f"Raw aiohttp search found {len(results)} results")
-                            summoner_data = results[0]
-                            return Summoner(summoner_data)
-                    else:
-                        logger.error(f"Raw aiohttp search failed with status {response.status}")
+            session = await self._get_session()
+            url = url_template
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    results = data.get('data', [])
+                    if results:
+                        logger.info(f"Raw aiohttp search found {len(results)} results")
+                        summoner_data = results[0]
+                        return Summoner(summoner_data)
+                else:
+                    logger.error(f"Raw aiohttp search failed with status {response.status}")
 
         except Exception as e:
             logger.error(f"Fallback search error for {query}: {e}")
@@ -125,22 +137,22 @@ class OPGGClient:
             profile_data = None
             # Direct aiohttp fetch
             logger.info(f"Fetching rank info via aiohttp: {url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self._headers) as resp:
-                    logger.info(f"Rank info response status: {resp.status}")
-                    if resp.status == 200:
-                        data = await resp.json()
-                        profile_data = data.get('data', {})
-                        # Log ALL keys for debugging
-                        logger.info(f"Profile data keys: {list(profile_data.keys()) if isinstance(profile_data, dict) else 'not a dict'}")
-                        
-                        # Log summoner sub-keys if present
-                        if 'summoner' in profile_data:
-                            summoner_data = profile_data['summoner']
-                            logger.info(f"summoner sub-keys: {list(summoner_data.keys()) if isinstance(summoner_data, dict) else summoner_data}")
-                            # Check for league_stats inside summoner
-                            if 'league_stats' in summoner_data:
-                                logger.info(f"Found league_stats inside summoner object!")
+            session = await self._get_session()
+            async with session.get(url) as resp:
+                logger.info(f"Rank info response status: {resp.status}")
+                if resp.status == 200:
+                    data = await resp.json()
+                    profile_data = data.get('data', {})
+                    # Log ALL keys for debugging
+                    logger.info(f"Profile data keys: {list(profile_data.keys()) if isinstance(profile_data, dict) else 'not a dict'}")
+                    
+                    # Log summoner sub-keys if present
+                    if 'summoner' in profile_data:
+                        summoner_data = profile_data['summoner']
+                        logger.info(f"summoner sub-keys: {list(summoner_data.keys()) if isinstance(summoner_data, dict) else summoner_data}")
+                        # Check for league_stats inside summoner
+                        if 'league_stats' in summoner_data:
+                            logger.info(f"Found league_stats inside summoner object!")
 
             if not profile_data:
                 logger.warning(f"No profile_data found for summoner {summoner.summoner_id}")
@@ -242,24 +254,24 @@ class OPGGClient:
                 logger.info(f"Renewal check: renewable_at={summoner.renewable_at}, current_time={datetime.now()}")
             
             logger.info(f"Requesting data renewal for {game_name}#{tagline} (URL: {url})")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers) as resp:
-                    logger.info(f"Renewal request status: {resp.status}")
-                    if resp.status in [200, 201, 202, 204]:
-                        try:
-                            data = await resp.json()
-                            # Handle response format like {'data': {'finish': False, 'delay': 1000, ...}}
-                            resp_data = data.get('data', {})
-                            msg = resp_data.get('message', 'Success')
-                            finish = resp_data.get('finish')
-                            delay = resp_data.get('delay')
-                            logger.info(f"Renewal response: message='{msg}', finish={finish}, delay={delay}")
-                        except Exception:
-                            logger.info(f"Renewal request sent successfully (status: {resp.status})")
-                        return True
-                    else:
-                        logger.warning(f"Renewal request failed with status {resp.status}")
-                        return False
+            session = await self._get_session()
+            async with session.post(url, headers=headers) as resp:
+                logger.info(f"Renewal request status: {resp.status}")
+                if resp.status in [200, 201, 202, 204]:
+                    try:
+                        data = await resp.json()
+                        # Handle response format like {'data': {'finish': False, 'delay': 1000, ...}}
+                        resp_data = data.get('data', {})
+                        msg = resp_data.get('message', 'Success')
+                        finish = resp_data.get('finish')
+                        delay = resp_data.get('delay')
+                        logger.info(f"Renewal response: message='{msg}', finish={finish}, delay={delay}")
+                    except Exception:
+                        logger.info(f"Renewal request sent successfully (status: {resp.status})")
+                    return True
+                else:
+                    logger.warning(f"Renewal request failed with status {resp.status}")
+                    return False
         except Exception as e:
             logger.error(f"Error in renew_summoner: {e}")
             return False
@@ -288,43 +300,43 @@ class OPGGClient:
         headers = self._headers
         try:
             logger.info(f"Fetching tier history via aiohttp: {url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
-                    logger.info(f"Tier history response status: {response.status}")
-                    if response.status != 200:
-                        logger.error(f"Failed to fetch tier history: HTTP {response.status}")
-                        return []
-                    data = await response.json()
-                    history_list = data.get('data', [])
-                    results = []
-                    for entry in history_list:
-                        updated_at_str = entry.get('created_at')
-                        if not updated_at_str: continue
-                        
-                        # Try to find tier_info
-                        tier_info = entry.get('tier_info')
-                        if not tier_info:
-                            # Maybe it's flat in entry?
-                            tier_info = entry
-                        
-                        try:
-                            updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
-                        except Exception: continue
-                        
-                        tier = tier_info.get('tier', 'UNRANKED').upper()
-                        # Some versions use 'division', others 'rank'
-                        division = tier_info.get('division') or tier_info.get('rank') or ""
-                        lp = tier_info.get('lp', 0)
-                        
-                        results.append({
-                            'tier': tier,
-                            'rank': self.division_to_roman(division),
-                            'lp': lp,
-                            'wins': 0,
-                            'losses': 0,
-                            'updated_at': updated_at
-                        })
-                    return results
+            session = await self._get_session()
+            async with session.get(url) as response:
+                logger.info(f"Tier history response status: {response.status}")
+                if response.status != 200:
+                    logger.error(f"Failed to fetch tier history: HTTP {response.status}")
+                    return []
+                data = await response.json()
+                history_list = data.get('data', [])
+                results = []
+                for entry in history_list:
+                    updated_at_str = entry.get('created_at')
+                    if not updated_at_str: continue
+                    
+                    # Try to find tier_info
+                    tier_info = entry.get('tier_info')
+                    if not tier_info:
+                        # Maybe it's flat in entry?
+                        tier_info = entry
+                    
+                    try:
+                        updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    except Exception: continue
+                    
+                    tier = tier_info.get('tier', 'UNRANKED').upper()
+                    # Some versions use 'division', others 'rank'
+                    division = tier_info.get('division') or tier_info.get('rank') or ""
+                    lp = tier_info.get('lp', 0)
+                    
+                    results.append({
+                        'tier': tier,
+                        'rank': self.division_to_roman(division),
+                        'lp': lp,
+                        'wins': 0,
+                        'losses': 0,
+                        'updated_at': updated_at
+                    })
+                return results
         except Exception as e:
             logger.error(f"Error in get_tier_history: {e}")
             return []

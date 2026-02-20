@@ -115,14 +115,6 @@ class Register(commands.Cog):
             else:
                 await interaction.followup.send(f"削除エラー: {e}")
 
-    @user_group.command(name="edit", description="Riot IDを指定してユーザー情報を更新します（再登録と同じです）")
-    async def user_edit(self, interaction: discord.Interaction, riot_id: str):
-        # reuse add logic or just prompt for new details
-        await interaction.response.send_message(f"Riot ID {riot_id} の新しい所有者(me/ID/名前)を入力してください。(所有者が同じなら `me` 等)")
-        # For simplicity, edit here might just mean re-running the validation for THAT riot id or changing owner.
-        # But the user asked for edit to be like schedule edit.
-        # Let's just point them to /user add since it's an upsert anyway.
-        await interaction.followup.send("Riot IDの変更や所有者変更は `/user add` を再度実行してください。既存のデータは上書きされます。")
 
     @user_group.command(name="help", description="userコマンドの使い方を表示します")
     async def user_help(self, interaction: discord.Interaction):
