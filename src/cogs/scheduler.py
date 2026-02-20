@@ -637,7 +637,7 @@ class Scheduler(commands.Cog):
             # Get Rank
             tier, rank, lp, wins, losses = await opgg_client.get_rank_info(summoner)
             logger.info(f"Rank info for {riot_id}: {tier} {rank} {lp}LP (W:{wins} L:{losses})")
-            await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date)
+            await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=datetime.now())
             return True
         except Exception as e:
             logger.error(f"Error in fetch_and_save_rank for {riot_id}: {e}", exc_info=True)

@@ -144,18 +144,19 @@ class Database:
                 # New registration, assign local_id
                 max_id = await conn.fetchval("SELECT MAX(local_id) FROM users WHERE server_id = $1", server_id) or 0
                 local_id = max_id + 1
+                now = datetime.now()
                 query = """
-                INSERT INTO users (server_id, discord_id, riot_id, puuid, local_id, update_date)
-                VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+                INSERT INTO users (server_id, discord_id, riot_id, puuid, local_id, reg_date, update_date)
+                VALUES ($1, $2, $3, $4, $5, $6, $6)
                 """
-                await conn.execute(query, server_id, discord_id, riot_id, puuid, local_id)
+                await conn.execute(query, server_id, discord_id, riot_id, puuid, local_id, now)
             else:
                 # Update existing
                 query = """
-                UPDATE users SET puuid = $4, update_date = CURRENT_TIMESTAMP
+                UPDATE users SET puuid = $4, update_date = $5
                 WHERE server_id = $1 AND discord_id = $2 AND riot_id = $3
                 """
-                await conn.execute(query, server_id, discord_id, riot_id, puuid)
+                await conn.execute(query, server_id, discord_id, riot_id, puuid, datetime.now())
 
     async def get_user_by_discord_id(self, server_id: int, discord_id: int):
         query = "SELECT * FROM users WHERE server_id = $1 AND discord_id = $2"
@@ -184,11 +185,11 @@ class Database:
             max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules WHERE server_id = $1", server_id) or 0
             local_id = max_id + 1
             query = """
-            INSERT INTO schedules (server_id, schedule_time, channel_id, created_by, period_type, output_type, status, local_id, update_date)
-            VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, CURRENT_TIMESTAMP)
+            INSERT INTO schedules (server_id, schedule_time, channel_id, created_by, period_type, output_type, status, local_id, reg_date, update_date)
+            VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $8)
             RETURNING local_id
             """
-            return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id)
+            return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id, datetime.now())
 
     async def get_all_schedules(self):
         query = "SELECT * FROM schedules"
@@ -200,18 +201,20 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, server_id)
 
-    async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date):
+    async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date: datetime = None):
+        if reg_date is None:
+            reg_date = datetime.now()
         games = wins + losses
         query = """
-        INSERT INTO rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (server_id, discord_id, riot_id, fetch_date)
         DO UPDATE SET 
             tier = $4, rank = $5, lp = $6, wins = $7, losses = $8, games = $9, 
-            reg_date = CURRENT_TIMESTAMP
+            reg_date = $11
         """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date)
+            await conn.execute(query, server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
 
     async def get_rank_history(self, server_id: int, discord_id: int, riot_id: str, start_date: date, end_date: date):
         query = """
@@ -272,20 +275,20 @@ class Database:
 
         query = """
         UPDATE schedules 
-        SET schedule_time = $3, channel_id = $4, period_type = $5, output_type = $6, update_date = CURRENT_TIMESTAMP
+        SET schedule_time = $3, channel_id = $4, period_type = $5, output_type = $6, update_date = $7
         WHERE server_id = $1 AND local_id = $2
         """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, output_type)
+            await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, output_type, datetime.now())
 
     async def set_schedule_status(self, server_id: int, local_id: int, status: str):
         query = """
         UPDATE schedules 
-        SET status = $3, update_date = CURRENT_TIMESTAMP
+        SET status = $3, update_date = $4
         WHERE server_id = $1 AND local_id = $2
         """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, server_id, local_id, status)
+            await conn.execute(query, server_id, local_id, status, datetime.now())
 
     async def get_schedule_by_id(self, server_id: int, local_id: int):
         query = "SELECT * FROM schedules WHERE server_id = $1 AND local_id = $2"
