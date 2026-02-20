@@ -52,9 +52,6 @@ def rank_to_numeric(tier: str, division: str, lp: int) -> int:
     
     # Apex tiers don't have divisions
     if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
-        # We give Master 2800, GM 3200, Challenger 3600 base? 
-        # Or just use the index.
-        # Let's say Master starts at 2800.
         return tier_val + lp
     
     div_val = DIV_MAP.get(division, 0) * 100
@@ -67,15 +64,15 @@ def numeric_to_rank(val: int) -> str:
         tier_idx = len(TIER_ORDER) - 1
     
     tier = TIER_ORDER[tier_idx]
+    tier_offset = val % 400
     
     if tier in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
-        lp = val % 400 # This is a bit arbitrary for Apex
-        return f"{tier}"
+        if tier_offset == 0:
+            return f"{tier}"
+        else:
+            return f"+{tier_offset}LP"
     
-    rem = val % 400
-    div_idx = rem // 100
-    lp = rem % 100
-    
+    div_idx = tier_offset // 100
     div_names = ["IV", "III", "II", "I"]
     div = div_names[div_idx] if div_idx < 4 else "I"
     
@@ -171,7 +168,8 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     ax.set_title(title_full, fontsize=22, color=TEXT_COLOR, pad=35, weight='bold')
 
     if has_today:
-        fig.text(0.5, 0.05, "※当日分は定期実行時のデータです", ha='center', fontsize=10, color=SECONDARY_TEXT)
+        fig.text(0.97, 0.03, "※当日分は定期実行時のデータです", ha='right', fontsize=13, 
+                 color=TEXT_COLOR, weight='bold')
 
     ax.set_xlabel("Date", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
     ax.set_ylabel("Rank", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
@@ -209,6 +207,14 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         min_v, max_v = min(all_values), max(all_values)
         y_min = (min_v // 100) * 100
         y_max = (max_v // 100 + 1) * 100
+        
+        # Apex Tier scaling: If max is MASTER/GM, try to show the next tier threshold
+        max_tier_idx = int(max_v // 400)
+        if max_tier_idx < len(TIER_ORDER) - 1:
+            tier_name = TIER_ORDER[max_tier_idx]
+            if tier_name in ["MASTER", "GRANDMASTER"]:
+                # Force top to next tier boundary
+                y_max = (max_tier_idx + 1) * 400
         ax.set_ylim(y_min, y_max)
         
         y_ticks = list(range(int(y_min), int(y_max) + 1, 100))
@@ -218,9 +224,12 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         ax.set_yticklabels(y_labels, fontsize=10)
 
     if len(user_data) > 1:
-        leg = ax.legend(loc='upper right', facecolor=BG_COLOR, edgecolor=AXIS_COLOR)
+        # Move legend outside the plot area to the right
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), 
+                         facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
         for text in leg.get_texts():
             text.set_color(TEXT_COLOR)
+            text.set_weight('bold')
 
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120)
@@ -243,34 +252,32 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     ax = fig.add_subplot(111)
     ax.axis('off')
 
-    if col_widths is None:
-        num_cols = len(headers)
-        if num_cols >= 3:
-            # Traditional report: ID (20%), Dates (remaining), Diff1/2 (15% each)
-            side_cols = 1 + 2 # Riot ID + 2 Diffs
-            mid_count = max(0, num_cols - side_cols)
-            col_widths = [0.2] + [max(0.1, (1.0 - 0.5) / mid_count if mid_count > 0 else 0.1)] * mid_count + [0.15, 0.15]
-            # Normalize
-            tw = sum(col_widths)
-            col_widths = [w/tw for w in col_widths]
-        else:
-            col_widths = [1.0/num_cols] * num_cols
-    
-    table = ax.table(
-        cellText=data,
-        colLabels=headers,
-        loc='center',
-        cellLoc='center',
-        colWidths=col_widths
-    )
+    # Create table setup
+    table_kwargs = {
+        'cellText': data,
+        'colLabels': headers,
+        'loc': 'center',
+        'cellLoc': 'center'
+    }
+    if col_widths is not None:
+        table_kwargs['colWidths'] = col_widths
+
+    table = ax.table(**table_kwargs)
 
     table.auto_set_font_size(False)
     table.set_fontsize(12)
+    
+    # Auto-adjust column widths only if not explicitly provided
+    if col_widths is None:
+        table.auto_set_column_width(col=list(range(len(headers))))
     table.scale(1.0, 3.5) 
 
     for (row, col), cell in table.get_celld().items():
-        cell.set_edgecolor('#1e293b')
+        cell.set_edgecolor(HEADER_BG)
         cell.set_linewidth(0.5)
+        # Increase horizontal padding to prevent text from touching edges
+        cell.set_text_props(ha='center', va='center')
+        cell.PAD = 0.05 # standard padding for auto_set_column_width
         
         if row == 0:
             cell.set_facecolor(HEADER_BG)
@@ -292,7 +299,9 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
 
             if col == 0:
                 cell.get_text().set_horizontalalignment('left')
-                cell.get_text().set_position((0.08, 0.5))
+                # For left alignment after auto-width, we rely on the cell.PAD and text pos
+                # We need to give it a bit more shift to the right to not touch the frame
+                cell.get_text().set_position((0.05, 0.5))
 
     ax.set_title(title, fontsize=24, color='white', pad=45, weight='bold')
 

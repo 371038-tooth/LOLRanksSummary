@@ -650,7 +650,6 @@ class Scheduler(commands.Cog):
 
     def _generate_single_user_report_impl(self, user, history, period_days: int) -> io.BytesIO:
         """Generate vertical image report for a single user (Sync implementation)."""
-        uid = user['discord_id']
         rid = user['riot_id']
         
         if not history:
@@ -681,6 +680,7 @@ class Scheduler(commands.Cog):
         # Custom col_widths for individual report (vertical)
         col_widths = [0.12, 0.20, 0.40, 0.28]
         return generate_report_image(header, table_rows, f"{rid} Report (Last {period_days} Days)", col_widths=col_widths)
+
     def _generate_report_image_payload_impl(self, data_map, today: date, period_days: int, period_type: str = 'daily') -> io.BytesIO:
         """Generate table image for all users (Sync implementation)."""
         all_dates = set()
