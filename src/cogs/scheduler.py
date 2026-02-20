@@ -677,9 +677,7 @@ class Scheduler(commands.Cog):
                     record_str = f"{g}戦{w}勝({rate}%)"
             table_rows.append([d_str, r_str, diff_str, record_str])
 
-        # Custom col_widths for individual report (vertical)
-        col_widths = [0.12, 0.20, 0.40, 0.28]
-        return generate_report_image(header, table_rows, f"{rid} Report (Last {period_days} Days)", col_widths=col_widths)
+        return generate_report_image(header, table_rows, f"{rid} Report (Last {period_days} Days)")
 
     def _generate_report_image_payload_impl(self, data_map, today: date, period_days: int, period_type: str = 'daily') -> io.BytesIO:
         """Generate table image for all users (Sync implementation)."""
@@ -768,15 +766,6 @@ class Scheduler(commands.Cog):
                 date_headers.append(label + get_today_time_suffix(d))
             
         headers = ["RIOT ID"] + date_headers + [diff_label, period_label]
-        
-        # Calculate colWidths
-        # ID (15%), Dates (8% * N), Diff1 (25%), Diff2 (25%) -> Total ~100%
-        # No "Record" column anymore.
-        num_middle_dates = len(shown_dates)
-        col_widths = [0.15] + [0.08] * num_middle_dates + [0.25, 0.25]
-        total_relative = sum(col_widths)
-        col_widths = [w / total_relative for w in col_widths]
-
         table_data = []
         for rid, h_map in data_map.items():
             row = [rid.split('#')[0]]
@@ -790,13 +779,7 @@ class Scheduler(commands.Cog):
             anchor_date = sorted_dates[-1]
             anchor_entry = h_map.get(anchor_date)
             
-            # Try to find entry exactly X days ago
-            diff1_date = anchor_date - timedelta(days=diff_days)
-            # Find closest entry on or before diff1_date if exact match not found? 
-            # Ideally exact match or closest previous. 
-            # For simplicity, look for exact date in history map. 
-            # If period is long (monthly), exact date might be missing if fetch skipped.
-            # Let's search for closest date <= target_date
+            # Find closest entry on or before target date
             
             def get_entry_near(target_d):
                 candidates = [d for d in h_map.keys() if d <= target_d]
@@ -819,7 +802,7 @@ class Scheduler(commands.Cog):
             
             table_data.append(row)
 
-        return generate_report_image(headers, table_data, f"Rank Report ({period_type.capitalize()})", col_widths=col_widths)
+        return generate_report_image(headers, table_data, f"Rank Report ({period_type.capitalize()})")
 
 async def setup(bot):
     await bot.add_cog(Scheduler(bot))
