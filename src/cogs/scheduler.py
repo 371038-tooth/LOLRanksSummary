@@ -780,6 +780,7 @@ class Scheduler(commands.Cog):
             anchor_entry = h_map.get(anchor_date)
             
             # Find closest entry on or before target date
+            diff1_date = anchor_date - timedelta(days=diff_days)
             
             def get_entry_near(target_d):
                 candidates = [d for d in h_map.keys() if d <= target_d]
