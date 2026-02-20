@@ -2,6 +2,11 @@ import os
 import sys
 import logging
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Set timezone to JST (for Linux environments like Railway)
+os.environ['TZ'] = 'Asia/Tokyo'
+load_dotenv()
 
 # Add project root to sys.path to ensure 'src' package is found
 root_path = Path(__file__).resolve().parent.parent
@@ -11,6 +16,7 @@ if str(root_path) not in sys.path:
 import discord
 from discord.ext import commands
 from src.database import db
+from src.utils.opgg_client import opgg_client
 
 from logging.handlers import RotatingFileHandler
 
@@ -73,6 +79,7 @@ class LOLRSBot(commands.Bot):
         await self.process_commands(message)
 
     async def close(self):
+        await opgg_client.close()
         await db.close()
         await super().close()
 
@@ -93,10 +100,6 @@ def main():
     # Prefix handling (case-insensitive)
     if token.lower().startswith('bot '):
         token = token[4:].strip()
-        
-    # Automatic fix for common copy error
-    if token.startswith('TQ2') and not token.startswith('MTQ2'):
-        token = 'M' + token
 
     bot = LOLRSBot()
     bot.run(token)

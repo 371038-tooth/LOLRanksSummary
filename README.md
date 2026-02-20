@@ -56,6 +56,9 @@ pip install -r requirements.txt
 | `DISCORD_BOT_TOKEN` | Discord Developer Portal で取得した Bot トークン | `MTE...` |
 | `DATABASE_URL` | PostgreSQL 接続 URL | `postgresql://user:pass@localhost:5432/dbname` |
 | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | （`DATABASE_URL` の代わりに個別の接続情報も使用可能） | |
+| `TZ` | (任意) タイムゾーン。Railway 等の Linux 環境では `Asia/Tokyo` を設定推奨。 | `Asia/Tokyo` |
+
+※ 本ボットは内部で `Asia/Tokyo` タイムゾーンを強制する設定（`os.environ['TZ']`）を含んでおり、JST でのスケジュール実行およびレポート生成に最適化されています。
 
 ### 4. 起動
 ```bash

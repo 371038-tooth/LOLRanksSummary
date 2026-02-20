@@ -224,7 +224,7 @@ class Database:
 
     async def get_rank_history_for_graph(self, server_id: int, discord_id: int, riot_id: str, start_date: date):
         query = """
-        SELECT fetch_date, tier, rank, lp, wins, losses, games
+        SELECT fetch_date, tier, rank, lp, wins, losses, games, reg_date
         FROM rank_history
         WHERE server_id = $1 AND discord_id = $2 AND riot_id = $3 AND fetch_date >= $4
         ORDER BY fetch_date ASC
