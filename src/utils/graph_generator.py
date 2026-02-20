@@ -180,19 +180,18 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 'x': last_r['fetch_date']
             })
 
-    # Draw multi-user labels with overlap adjustment
+    # 1. Prepare multi-user label data and adjustment
     if len(aggregated_data) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
-        THRESHOLD = 25 # Minimum vertical gap in rank points
+        THRESHOLD = 30 # Minimum vertical gap in rank points (increased for Japanese font)
         for i in range(1, len(label_items)):
             diff = label_items[i-1]['y'] - label_items[i]['y']
             if diff < THRESHOLD:
                 label_items[i]['y'] = label_items[i-1]['y'] - THRESHOLD
         
+        # Add labels to range calculation
         for item in label_items:
-            ax.annotate(f"{item['name']}: {item['lp']}LP", (item['x'], item['y']), 
-                        textcoords="offset points", xytext=(0, 12), ha='center', 
-                        fontsize=9, color=item['color'], weight='bold')
+            all_values.append(item['y'])
 
     title_time_str = ""
     if latest_fetch_time:
@@ -243,15 +242,15 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
-        y_min = (min_v // 100) * 100
-        y_max = (max_v // 100 + 1) * 100
+        # Add padding (50pt) so labels aren't clipped against top/bottom spines
+        y_min = ((min_v - 50) // 100) * 100
+        y_max = ((max_v + 50) // 100 + 1) * 100
         
-        # Apex Tier scaling: If max is MASTER/GM, try to show the next tier threshold
+        # Apex Tier scaling
         max_tier_idx = int(max_v // 400)
         if max_tier_idx < len(TIER_ORDER) - 1:
             tier_name = TIER_ORDER[max_tier_idx]
             if tier_name in {"MASTER", "GRANDMASTER"}:
-                # Force top to next tier boundary
                 y_max = (max_tier_idx + 1) * 400
         ax.set_ylim(y_min, y_max)
         
@@ -260,6 +259,13 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         
         ax.set_yticks(y_ticks)
         ax.set_yticklabels(y_labels, fontsize=10)
+
+    # 4. Draw labels after Y-axis setup
+    if len(aggregated_data) > 1:
+        for item in label_items:
+            ax.annotate(f"{item['name']}: {item['lp']}LP", (item['x'], item['y']), 
+                        textcoords="offset points", xytext=(0, 12), ha='center', 
+                        fontsize=9, color=item['color'], weight='bold')
 
     if len(aggregated_data) > 1:
         # Move legend outside the plot area to the right
