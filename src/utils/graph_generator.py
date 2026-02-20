@@ -206,7 +206,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     ax.set_title(title_full, fontsize=22, color=TEXT_COLOR, pad=35, weight='bold')
 
     if has_today:
-        fig.text(0.97, 0.03, "※当日分は定期実行時のデータです", ha='right', fontsize=13, 
+        time_display = f"{latest_fetch_time.hour}:{latest_fetch_time.minute:02d}" if latest_fetch_time else "定期実行"
+        footer_text = f"※当日分のデータは、{time_display} 時点のデータです。"
+        fig.text(0.97, 0.03, footer_text, ha='right', fontsize=13, 
                  color=TEXT_COLOR, weight='bold')
 
     ax.set_xlabel("Date", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
