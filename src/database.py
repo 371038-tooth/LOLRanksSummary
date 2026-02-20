@@ -207,7 +207,8 @@ class Database:
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (server_id, discord_id, riot_id, fetch_date)
         DO UPDATE SET 
-            tier = $4, rank = $5, lp = $6, wins = $7, losses = $8, games = $9
+            tier = $4, rank = $5, lp = $6, wins = $7, losses = $8, games = $9, 
+            reg_date = CURRENT_TIMESTAMP
         """
         async with self.pool.acquire() as conn:
             await conn.execute(query, server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date)

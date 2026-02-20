@@ -740,11 +740,16 @@ class Scheduler(commands.Cog):
         def get_today_time_suffix(d):
             if d != today:
                 return ""
+            
+            latest_time = None
             for hm in data_map.values():
                 entry = hm.get(d)
                 if entry and 'reg_date' in entry:
-                    f_time = entry['reg_date']
-                    return f"({f_time.hour}:{f_time.minute:02d}時点)"
+                    if latest_time is None or entry['reg_date'] > latest_time:
+                        latest_time = entry['reg_date']
+            
+            if latest_time:
+                return f"({latest_time.hour}:{latest_time.minute:02d}時点)"
             return "(現在)"
 
         # Date headers based on period_type
@@ -766,6 +771,13 @@ class Scheduler(commands.Cog):
                 date_headers.append(label + get_today_time_suffix(d))
             
         headers = ["RIOT ID"] + date_headers + [diff_label, period_label]
+
+        def get_entry_near(h_map, target_d):
+            candidates = [d for d in h_map.keys() if d <= target_d]
+            if not candidates: return None
+            best = max(candidates)
+            return h_map[best]
+
         table_data = []
         for rid, h_map in data_map.items():
             row = [rid.split('#')[0]]
@@ -782,20 +794,14 @@ class Scheduler(commands.Cog):
             # Find closest entry on or before target date
             diff1_date = anchor_date - timedelta(days=diff_days)
             
-            def get_entry_near(target_d):
-                candidates = [d for d in h_map.keys() if d <= target_d]
-                if not candidates: return None
-                best = max(candidates)
-                return h_map[best]
-
-            diff1_entry = get_entry_near(diff1_date)
+            diff1_entry = get_entry_near(h_map, diff1_date)
             diff1_text = "-"
             if diff1_entry and anchor_entry:
                 diff1_text = rank_calculator.calculate_diff_text(diff1_entry, anchor_entry, include_prefix=True)
             row.append(diff1_text)
             
             # Diff 2 (Period start)
-            start_entry = get_entry_near(sorted_dates[0])
+            start_entry = get_entry_near(h_map, sorted_dates[0])
             period_diff_text = "-"
             if start_entry and anchor_entry:
                 period_diff_text = rank_calculator.calculate_diff_text(start_entry, anchor_entry, include_prefix=True)

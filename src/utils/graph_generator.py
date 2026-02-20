@@ -144,30 +144,82 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 ax.annotate(f"{r['lp']}LP", (dates[j], values[j]), 
                             textcoords="offset points", xytext=(0, 10), ha='center', 
                             fontsize=9, color=TEXT_COLOR, alpha=0.9, weight='bold')
-        else:
-            last_r = rows[-1]
-            ax.annotate(f"{name}: {last_r['lp']}LP", (dates[-1], values[-1]), 
-                        textcoords="offset points", xytext=(0, 12), ha='center', 
-                        fontsize=9, color=color, weight='bold')
+        # (Multi-user labels are handled after the loop to prevent overlap)
 
-    # Title and labels parsing logic...
+    # Collect labels and track latest fetch time
     has_today = False
-    today_time_str = ""
+    latest_fetch_time = None
     today_obj = date.today()
-    for d_series in user_data.values():
-        for r in d_series:
+    label_items = []
+
+
+    for i, (riot_id, rows) in enumerate(user_data.items()):
+        if not rows: continue
+        
+        # 1. Aggregate/Filter rows exactly as done in the drawing loop
+        current_rows = rows
+        if period_type == 'weekly':
+            weeks = {}
+            for r in current_rows:
+                year, week, _ = r['fetch_date'].isocalendar()
+                weeks[(year, week)] = r
+            current_rows = sorted(weeks.values(), key=lambda x: x['fetch_date'])
+        elif period_type == 'monthly':
+            months = {}
+            for r in current_rows:
+                key = (r['fetch_date'].year, r['fetch_date'].month)
+                months[key] = r
+            current_rows = sorted(months.values(), key=lambda x: x['fetch_date'])
+
+        latest_d = max(r['fetch_date'] for r in current_rows)
+        if latest_d.year < today_obj.year:
+            start_filter = date(latest_d.year, 1, 1)
+            current_rows = [r for r in current_rows if r['fetch_date'] >= start_filter]
+        
+        if not current_rows: continue
+
+        # 2. Track latest fetch time for title
+        for r in current_rows:
             if r['fetch_date'] == today_obj:
                 has_today = True
                 if 'reg_date' in r:
-                    f_time = r['reg_date']
-                    today_time_str = f"({f_time.hour}:{f_time.minute:02d}時点)"
-                break
-        if has_today and today_time_str:
-            break
+                    if latest_fetch_time is None or r['reg_date'] > latest_fetch_time:
+                        latest_fetch_time = r['reg_date']
 
+        # 3. Prepare label data (using aggregated rows)
+        if len(user_data) > 1:
+            name = riot_id.split('#')[0]
+            color = COLORS[i % len(COLORS)]
+            last_r = current_rows[-1]
+            label_items.append({
+                'name': name,
+                'lp': last_r['lp'],
+                'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
+                'color': color,
+                'x': last_r['fetch_date']
+            })
+
+    # Draw multi-user labels with overlap adjustment
+    if len(user_data) > 1:
+        label_items.sort(key=lambda x: x['y'], reverse=True)
+        THRESHOLD = 25 # Minimum vertical gap in rank points
+        for i in range(1, len(label_items)):
+            diff = label_items[i-1]['y'] - label_items[i]['y']
+            if diff < THRESHOLD:
+                label_items[i]['y'] = label_items[i-1]['y'] - THRESHOLD
+        
+        for item in label_items:
+            ax.annotate(f"{item['name']}: {item['lp']}LP", (item['x'], item['y']), 
+                        textcoords="offset points", xytext=(0, 12), ha='center', 
+                        fontsize=9, color=item['color'], weight='bold')
+
+    title_time_str = ""
+    if latest_fetch_time:
+        title_time_str = f"({latest_fetch_time.hour}:{latest_fetch_time.minute:02d}時点)"
+    
     title_prefix = "Rank History"
     if has_today:
-        title_prefix += f" {today_time_str}" if today_time_str else " (現在)"
+        title_prefix += f" {title_time_str}" if title_time_str else " (現在)"
     
     title_full = f"{title_prefix}{title_suffix} ({period_type})"
     ax.set_title(title_full, fontsize=22, color=TEXT_COLOR, pad=35, weight='bold')
