@@ -183,7 +183,8 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     # 1. Prepare multi-user label data and adjustment
     if len(aggregated_data) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
-        THRESHOLD = 30 # Minimum vertical gap in rank points (increased for Japanese font)
+        # Cascade adjustment: handles any number of users by pushing them down as needed
+        THRESHOLD = 45 # Minimum vertical gap in rank points (increased for Japanese font clarity)
         for i in range(1, len(label_items)):
             diff = label_items[i-1]['y'] - label_items[i]['y']
             if diff < THRESHOLD:
@@ -242,9 +243,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
-        # Add padding (50pt) so labels aren't clipped against top/bottom spines
-        y_min = ((min_v - 50) // 100) * 100
-        y_max = ((max_v + 50) // 100 + 1) * 100
+        # Add padding (80pt) so labels aren't clipped against top/bottom spines
+        y_min = ((min_v - 80) // 100) * 100
+        y_max = ((max_v + 80) // 100 + 1) * 100
         
         # Apex Tier scaling
         max_tier_idx = int(max_v // 400)
