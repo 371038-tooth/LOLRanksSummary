@@ -5,9 +5,22 @@ matplotlib.use('Agg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.dates as mdates
-from datetime import date, timedelta
+from matplotlib.ticker import FuncFormatter, FixedLocator
+from datetime import date
 import io
 import os
+from typing import List, Dict, Any
+
+# --- Style Constants ---
+BG_COLOR = '#0b0f19'
+AXIS_COLOR = '#334155'
+TEXT_COLOR = '#f8fafc'
+SECONDARY_TEXT = '#94a3b8'
+HEADER_BG = '#1e293b'
+ROW_EVEN = '#111827'
+UP_COLOR = '#4ade80'   # Emerald-400
+DOWN_COLOR = '#fb7185' # Rose-400
+COLORS = ['#06b6d4', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#3b82f6', '#14b8a6']
 
 # Set Japanese font for Windows and Linux (Railway)
 # Use local font file for better portability
@@ -20,7 +33,6 @@ if os.path.exists(font_path):
 else:
     # Fallback
     matplotlib.rcParams['font.family'] = ['Meiryo', 'MS Gothic', 'Yu Gothic', 'sans-serif']
-from typing import List, Dict, Any
 
 # Rank Mapping
 TIER_ORDER = [
@@ -71,24 +83,15 @@ def numeric_to_rank(val: int) -> str:
 
 def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type: str, title_suffix: str = "") -> io.BytesIO:
     """
-    Generate a rank history graph for one or more users.
-    user_data: Dict mapping riot_id -> List of historical entries {'fetch_date', 'tier', 'rank', 'lp'}
-    period_type: 'daily', 'weekly', 'monthly'
-    title_suffix: Optional suffix for the title
+    Generate a rank history graph for one or more users with a stylish neon dark-mode design.
     """
     if not user_data:
         return None
 
-    # Use Figure object directly instead of pyplot state
-    fig = Figure(figsize=(12, 7))
-    FigureCanvasAgg(fig) # Attach canvas
+    fig = Figure(figsize=(12, 7), facecolor=BG_COLOR)
+    FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
-    
-    ax.set_facecolor('#2c3e50')
-    fig.set_facecolor('#34495e')
-
-    # Color palette
-    colors = ['#1abc9c', '#3498db', '#9b59b6', '#f1c40f', '#e67e22', '#e74c3c', '#ecf0f1', '#95a5a6']
+    ax.set_facecolor(BG_COLOR)
     
     all_dates = []
     all_values = []
@@ -97,21 +100,20 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         if not rows:
             continue
 
-        # --- Aggregation logic for Weekly/Monthly ---
+        # Aggregation logic...
         if period_type == 'weekly':
             weeks = {}
             for r in rows:
                 year, week, _ = r['fetch_date'].isocalendar()
-                weeks[(year, week)] = r # Latest entry in each week
+                weeks[(year, week)] = r
             rows = sorted(weeks.values(), key=lambda x: x['fetch_date'])
         elif period_type == 'monthly':
             months = {}
             for r in rows:
                 key = (r['fetch_date'].year, r['fetch_date'].month)
-                months[key] = r # Latest entry in each month
+                months[key] = r
             rows = sorted(months.values(), key=lambda x: x['fetch_date'])
 
-        # Filter by year logic (consistent with previous requirement)
         latest_date = max(r['fetch_date'] for r in rows)
         earliest_date = min(r['fetch_date'] for r in rows)
         if earliest_date.year < latest_date.year:
@@ -121,48 +123,70 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
         dates = [r['fetch_date'] for r in rows]
         values = [rank_to_numeric(r['tier'], r['rank'], r['lp']) for r in rows]
-        
         all_dates.extend(dates)
         all_values.extend(values)
         
-        color = colors[i % len(colors)]
+        color = COLORS[i % len(COLORS)]
         name = riot_id.split('#')[0]
         
-        # Plot line
-        ax.plot(dates, values, marker='o', linestyle='-', color=color, linewidth=2, markersize=5, label=name)
+        # Neon Glow Effect: Plot multiple times with different alpha and width
+        ax.plot(dates, values, color=color, linewidth=12, alpha=0.05, zorder=2)
+        ax.plot(dates, values, color=color, linewidth=8, alpha=0.1, zorder=3)
+        ax.plot(dates, values, color=color, linewidth=4, alpha=0.2, zorder=4)
+        ax.plot(dates, values, color=color, linewidth=2.5, linestyle='-', marker='o', 
+                markersize=4, markerfacecolor='white', markeredgewidth=1.5, zorder=5, label=name)
         
-        # Add LP annotations only for the latest point if multiple users, or all points if single user
+        # Labels
         if len(user_data) == 1:
             for j, r in enumerate(rows):
                 ax.annotate(f"{r['lp']}LP", (dates[j], values[j]), 
                             textcoords="offset points", xytext=(0, 10), ha='center', 
-                            fontsize=9, color='white', alpha=0.8)
+                            fontsize=9, color=TEXT_COLOR, alpha=0.9, weight='bold')
         else:
-            # Annotate only the last point for clarity in multi-user graphs
             last_r = rows[-1]
             ax.annotate(f"{name}: {last_r['lp']}LP", (dates[-1], values[-1]), 
-                        textcoords="offset points", xytext=(0, 10), ha='center', 
+                        textcoords="offset points", xytext=(0, 12), ha='center', 
                         fontsize=9, color=color, weight='bold')
 
-    # Title and Labels
-    title = f"Rank History{title_suffix} ({period_type})"
-    ax.set_title(title, fontsize=18, color='white', pad=25, weight='bold')
-    ax.set_xlabel("Date", fontsize=12, color='white', labelpad=10)
-    ax.set_ylabel("Rank", fontsize=12, color='white', labelpad=10)
+    # Title and labels parsing logic...
+    has_today = False
+    today_time_str = ""
+    today_obj = date.today()
+    for d_series in user_data.values():
+        for r in d_series:
+            if r['fetch_date'] == today_obj:
+                has_today = True
+                if 'reg_date' in r:
+                    f_time = r['reg_date']
+                    today_time_str = f"({f_time.hour}:{f_time.minute:02d}時点)"
+                break
+        if has_today and today_time_str:
+            break
 
-    # Tick colors and sizes
-    ax.tick_params(colors='white', labelsize=10)
+    title_prefix = "Rank History"
+    if has_today:
+        title_prefix += f" {today_time_str}" if today_time_str else " (現在)"
+    
+    title_full = f"{title_prefix}{title_suffix} ({period_type})"
+    ax.set_title(title_full, fontsize=22, color=TEXT_COLOR, pad=35, weight='bold')
+
+    if has_today:
+        fig.text(0.5, 0.05, "※当日分は定期実行時のデータです", ha='center', fontsize=10, color=SECONDARY_TEXT)
+
+    ax.set_xlabel("Date", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
+    ax.set_ylabel("Rank", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
+
+    ax.tick_params(colors=SECONDARY_TEXT, labelsize=10, length=0) # length=0 hides tick dashes
     for spine in ax.spines.values():
-        spine.set_color('#7f8c8d')
+        spine.set_visible(False) # Hide all spines for a cleaner look
+    
+    ax.grid(True, linestyle='--', alpha=0.1, color=SECONDARY_TEXT)
 
     # Date Formatting
-    from matplotlib.ticker import FuncFormatter, FixedLocator
-
     if period_type == 'daily':
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
         ax.xaxis.set_major_locator(mdates.DayLocator())
     elif period_type in ['weekly', 'monthly']:
-        # Use FixedLocator to ensure ticks are exactly on the data points
         unique_dates = sorted(list(set(all_dates)))
         if unique_dates:
             ax.xaxis.set_major_locator(FixedLocator(mdates.date2num(unique_dates)))
@@ -170,7 +194,6 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         if period_type == 'weekly':
             def format_weekly(x, pos):
                 d = mdates.num2date(x)
-                # Adjust mapping to match scheduler logic: week_num = (d.day - 1) // 7 + 1
                 week_num = (d.day - 1) // 7 + 1
                 return f"{d.month}月/{week_num}週目"
             ax.xaxis.set_major_formatter(FuncFormatter(format_weekly))
@@ -180,103 +203,100 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 return f"{d.month}月"
             ax.xaxis.set_major_formatter(FuncFormatter(format_monthly))
 
-    # Rotation should be set on the axes tick labels
-    # plt.xticks(rotation=45) -> ax.tick_params(axis='x', rotation=45)
     ax.tick_params(axis='x', rotation=45)
 
-    # Y-axis range and labels
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
-        # Use division-based limits without extra padding
         y_min = (min_v // 100) * 100
         y_max = (max_v // 100 + 1) * 100
-        
         ax.set_ylim(y_min, y_max)
         
         y_ticks = list(range(int(y_min), int(y_max) + 1, 100))
         y_labels = [numeric_to_rank(t) for t in y_ticks]
         
-        # Adjust Y-axis font size if too many ticks
-        fontsize = 10 if len(y_ticks) < 15 else 8
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels(y_labels, fontsize=fontsize)
+        ax.set_yticklabels(y_labels, fontsize=10)
 
-    # Legend
     if len(user_data) > 1:
-        leg = ax.legend(loc='upper left', bbox_to_anchor=(1, 1), facecolor='#34495e', edgecolor='#7f8c8d')
+        leg = ax.legend(loc='upper right', facecolor=BG_COLOR, edgecolor=AXIS_COLOR)
         for text in leg.get_texts():
-            text.set_color('white')
-
-    ax.grid(True, linestyle='--', alpha=0.1, color='#95a5a6')
+            text.set_color(TEXT_COLOR)
 
     buf = io.BytesIO()
-    # Use fig.savefig instead of plt.savefig
-    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=110)
+    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120)
     buf.seek(0)
     return buf
 
 def generate_report_image(headers: List[str], data: List[List[Any]], title: str, col_widths: List[float] = None) -> io.BytesIO:
     """
-    Generate a clean table image using matplotlib.
+    Generate a modern minimalist table image.
     """
     if not data:
         return None
 
-    # Calculate figure height based on number of rows
-    row_height = 0.5
-    header_height = 0.6
-    fig_height = header_height + (len(data) * row_height) + 1.0
+    row_height = 0.6
+    header_height = 0.8
+    fig_height = header_height + (len(data) * row_height) + 1.2
     
-    # Use Figure object directly
-    # Riot ID column is usually longest
-    fig = Figure(figsize=(14, max(4, fig_height)))
-    FigureCanvasAgg(fig) # Attach canvas
+    fig = Figure(figsize=(14, max(4, fig_height)), facecolor=BG_COLOR)
+    FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
-    
     ax.axis('off')
-    fig.set_facecolor('#34495e')
 
-    # Color configuration
-    header_color = '#2c3e50'
-    row_colors = ['#34495e', '#2c3e50']
-    text_color = 'white'
-
-    # Create table
-    # We estimate column widths based on headers and generic needs if not provided
     if col_widths is None:
-        col_widths = [0.15] + [0.08] * (len(headers) - 4) + [0.22, 0.22, 0.1]
+        num_cols = len(headers)
+        if num_cols >= 3:
+            # Traditional report: ID (20%), Dates (remaining), Diff1/2 (15% each)
+            side_cols = 1 + 2 # Riot ID + 2 Diffs
+            mid_count = max(0, num_cols - side_cols)
+            col_widths = [0.2] + [max(0.1, (1.0 - 0.5) / mid_count if mid_count > 0 else 0.1)] * mid_count + [0.15, 0.15]
+            # Normalize
+            tw = sum(col_widths)
+            col_widths = [w/tw for w in col_widths]
+        else:
+            col_widths = [1.0/num_cols] * num_cols
     
     table = ax.table(
         cellText=data,
         colLabels=headers,
         loc='center',
         cellLoc='center',
-        colColours=[header_color] * len(headers),
         colWidths=col_widths
     )
 
-    # Style table
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.0, 2.5) # Scale height for readability
+    table.set_fontsize(12)
+    table.scale(1.0, 3.5) 
 
     for (row, col), cell in table.get_celld().items():
-        cell.set_edgecolor('#7f8c8d')
+        cell.set_edgecolor('#1e293b')
+        cell.set_linewidth(0.5)
+        
         if row == 0:
-            cell.set_text_props(weight='bold', color=text_color)
+            cell.set_facecolor(HEADER_BG)
+            cell.set_text_props(weight='bold', color='white', fontsize=13)
         else:
-            cell.set_facecolor(row_colors[row % len(row_colors)])
-            cell.set_text_props(color=text_color)
-            # Make Riot ID (column 0) left-aligned for better readability
+            cell.set_facecolor(BG_COLOR if row % 2 == 0 else ROW_EVEN)
+            cell.set_text_props(color=TEXT_COLOR)
+            
+            # Trend Coloring based on header name
+            header_text = headers[col]
+            if "比" in header_text or "差" in header_text:
+                val_text = str(data[row-1][col])
+                if '+' in val_text:
+                    cell.get_text().set_color(UP_COLOR)
+                    cell.get_text().set_weight('bold')
+                elif '-' in val_text:
+                    cell.get_text().set_color(DOWN_COLOR)
+                    cell.get_text().set_weight('bold')
+
             if col == 0:
                 cell.get_text().set_horizontalalignment('left')
-                # Add a small offset for padding
-                cell.get_text().set_position((0.05, 0.5))
+                cell.get_text().set_position((0.08, 0.5))
 
-    ax.set_title(title, fontsize=18, color=text_color, pad=30, weight='bold')
+    ax.set_title(title, fontsize=24, color='white', pad=45, weight='bold')
 
     buf = io.BytesIO()
-    # Use fig.savefig with facecolor
-    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor='#34495e')
+    fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor=BG_COLOR)
     buf.seek(0)
     return buf
