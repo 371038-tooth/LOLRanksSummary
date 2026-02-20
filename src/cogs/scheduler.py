@@ -225,9 +225,10 @@ class Scheduler(commands.Cog):
 `graph`: 登録ユーザー全員の推移を1つのグラフで出力
 
 **入力形式の例**
-`21:00 here daily table` : 毎日21時に、このチャンネルに、日次レポート（過去7日間、前日比）を表で表示
-`09:30 1234567890 weekly graph` : 毎週金曜日の9:30に、チャンネルID 1234567890 に、週次レポート（過去60日間、前週比）をグラフで表示
-`08:00 here monthly table` : 毎月1日の8:00に、このチャンネルに、月次レポート（過去180日間、前月比）を表で表示
+`21:00 here daily table` : 毎日21時に、このチャンネルに、日次レポートを送信します。
+※実行時に最新のランク情報を取得して表示します。当日分は「(取得時刻時点)」と表示されます。
+`09:30 1234567890 weekly graph` : 毎週金曜日の9:30に、指定チャンネルに週次レポートをグラフで表示します。
+`08:00 here monthly table` : 毎月1日の8:00に、月次レポートを表示します。
 """
         await interaction.response.send_message(msg)
 
@@ -565,7 +566,7 @@ class Scheduler(commands.Cog):
             return
 
         # 1. Fetch latest data for all users before generating report
-        # ユーザーの要望により、自動fetchは行わず既存データのみを使用するように変更
+        await self.fetch_all_users_rank(server_id=server_id)
 
         today = date.today()
         
@@ -680,9 +681,6 @@ class Scheduler(commands.Cog):
         # Custom col_widths for individual report (vertical)
         col_widths = [0.12, 0.20, 0.40, 0.28]
         return generate_report_image(header, table_rows, f"{rid} Report (Last {period_days} Days)", col_widths=col_widths)
-
-
-        
     def _generate_report_image_payload_impl(self, data_map, today: date, period_days: int, period_type: str = 'daily') -> io.BytesIO:
         """Generate table image for all users (Sync implementation)."""
         all_dates = set()
@@ -741,16 +739,33 @@ class Scheduler(commands.Cog):
         elif period_type == 'weekly': period_label = "2ヶ月比"
         elif period_type == 'monthly': period_label = "半年比"
         
+        def get_today_time_suffix(d):
+            if d != today:
+                return ""
+            for hm in data_map.values():
+                entry = hm.get(d)
+                if entry and 'reg_date' in entry:
+                    f_time = entry['reg_date']
+                    return f"({f_time.hour}:{f_time.minute:02d}時点)"
+            return "(現在)"
+
         # Date headers based on period_type
         if period_type == 'weekly':
             date_headers = []
             for d in shown_dates:
                 week_num = (d.day - 1) // 7 + 1
-                date_headers.append(f"{d.month}月/{week_num}週目")
+                label = f"{d.month}月/{week_num}週目"
+                date_headers.append(label + get_today_time_suffix(d))
         elif period_type == 'monthly':
-            date_headers = [f"{d.month}月" for d in shown_dates]
+            date_headers = []
+            for d in shown_dates:
+                label = f"{d.month}月"
+                date_headers.append(label + get_today_time_suffix(d))
         else:
-            date_headers = [d.strftime("%m/%d") for d in shown_dates]
+            date_headers = []
+            for d in shown_dates:
+                label = d.strftime("%m/%d")
+                date_headers.append(label + get_today_time_suffix(d))
             
         headers = ["RIOT ID"] + date_headers + [diff_label, period_label]
         
