@@ -192,12 +192,12 @@ class Database:
             return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id, datetime.now())
 
     async def get_all_schedules(self):
-        query = "SELECT * FROM schedules"
+        query = "SELECT * FROM schedules ORDER BY server_id, local_id ASC"
         async with self.pool.acquire() as conn:
             return await conn.fetch(query)
 
     async def get_schedules_by_server(self, server_id: int):
-        query = "SELECT * FROM schedules WHERE server_id = $1"
+        query = "SELECT * FROM schedules WHERE server_id = $1 ORDER BY local_id ASC"
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, server_id)
 
@@ -236,12 +236,12 @@ class Database:
             return await conn.fetch(query, server_id, discord_id, riot_id, start_date)
 
     async def get_all_users(self):
-        query = "SELECT * FROM users"
+        query = "SELECT * FROM users ORDER BY server_id, local_id ASC"
         async with self.pool.acquire() as conn:
             return await conn.fetch(query)
 
     async def get_users_by_server(self, server_id: int):
-        query = "SELECT * FROM users WHERE server_id = $1"
+        query = "SELECT * FROM users WHERE server_id = $1 ORDER BY local_id ASC"
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, server_id)
 
