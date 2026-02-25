@@ -7,6 +7,7 @@ from src.utils import rank_calculator
 from src.utils.opgg_client import opgg_client
 from src.utils.opgg_compat import Region
 from src.utils.graph_generator import generate_rank_graph, generate_report_image
+from src.utils.graph_utils import split_user_data_by_rank
 from datetime import datetime, date, timedelta
 import asyncio
 import io
@@ -63,10 +64,12 @@ class Scheduler(commands.Cog):
             elif period_type == 'monthly':
                 cron_kwargs['day'] = 1
 
+            split = s.get('split', True)
+
             self.scheduler.add_job(
                 self.run_daily_report,
                 'cron',
-                args=[server_id, channel_id, period_type, s['output_type']],
+                args=[server_id, channel_id, period_type, s['output_type'], split],
                 **cron_kwargs
             )
         logger.info(f"Loaded {len(schedules)} reporting schedules (including Weekly/Monthly constraints).")
@@ -95,7 +98,12 @@ class Scheduler(commands.Cog):
             p_display = "日時"
             if p_type == 'weekly': p_display = "週次"
             elif p_type == 'monthly': p_display = "月次"
-            msg += f"{status_emoji} ID: {l_id} | 時間: {t_str} | Ch: <#{s['channel_id']}> | 期間: {p_display} | 形式: {s['output_type']}\n"
+            
+            s_display = ""
+            if s['output_type'] == 'graph':
+                s_display = " (分割)" if s.get('split', True) else " (全体)"
+                
+            msg += f"{status_emoji} ID: {l_id} | 時間: {t_str} | Ch: <#{s['channel_id']}> | 期間: {p_display} | 形式: {s['output_type']}{s_display}\n"
         
         if interaction.response.is_done():
             await interaction.followup.send(msg)
@@ -108,7 +116,7 @@ class Scheduler(commands.Cog):
 
     @schedule_group.command(name="add", description="スケジュールを登録します")
     async def schedule_add(self, interaction: discord.Interaction):
-        await interaction.response.send_message("登録するスケジュールを入力してください。\n形式: `時間(HH:MM) チャンネル(ID/here) 期間(daily/weekly/monthly) 出力形式(table/graph)`\n例: `21:00 here daily graph`")
+        await interaction.response.send_message("登録するスケジュールを入力してください。\n形式: `時間(HH:MM) チャンネル(ID/here) 期間(daily/weekly/monthly) 出力形式(table/graph) [分割(true/false)]`\n例: `21:00 here daily graph true`")
 
         def check(m):
             return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
@@ -119,20 +127,21 @@ class Scheduler(commands.Cog):
             await interaction.followup.send("タイムアウトしました。")
             return
 
-        time_str, channel_id, period_type, output_type, error = self.parse_schedule_input(msg.content, interaction.channel.id)
+        time_str, channel_id, period_type, output_type, split, error = self.parse_schedule_input(msg.content, interaction.channel.id)
         if error:
             await interaction.followup.send(error)
             return
 
         try:
-            await db.register_schedule(interaction.guild.id, time_str, channel_id, interaction.user.id, period_type, output_type)
+            await db.register_schedule(interaction.guild.id, time_str, channel_id, interaction.user.id, period_type, output_type, split)
             await self.reload_schedules()
             
             p_msg = "毎日"
             if period_type == 'weekly': p_msg = "毎週金曜日"
             elif period_type == 'monthly': p_msg = "毎月1日"
             
-            await interaction.followup.send(f"スケジュール登録完了: {time_str} にチャンネル <#{channel_id}> へ通知 ({p_msg}, 形式: {output_type})")
+            s_msg = " (分割)" if (output_type == 'graph' and split) else ""
+            await interaction.followup.send(f"スケジュール登録完了: {time_str} にチャンネル <#{channel_id}> へ通知 ({p_msg}, 形式: {output_type}{s_msg})")
         except Exception as e:
             await interaction.followup.send(f"エラーが発生しました: {e}")
 
@@ -185,7 +194,8 @@ class Scheduler(commands.Cog):
         current_time = s['schedule_time'].strftime("%H:%M") if hasattr(s['schedule_time'], 'strftime') else str(s['schedule_time'])
         
         p_type = s.get('period_type', 'daily')
-        await interaction.response.send_message(f"変更内容を入力してください (ID: {schedule_id})\n現在の設定: `{current_time}` <#{s['channel_id']}> `{p_type} {s['output_type']}`\n形式: `時間 チャンネル 期間 形式` (例: `22:00 here daily graph`)")
+        s_flag = "true" if s.get('split', True) else "false"
+        await interaction.response.send_message(f"変更内容を入力してください (ID: {schedule_id})\n現在の設定: `{current_time}` <#{s['channel_id']}> `{p_type} {s['output_type']} {s_flag}`\n形式: `時間 チャンネル 期間 形式 [分割(true/false)]` (例: `22:00 here daily graph true`)")
 
         def check(m):
             return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
@@ -196,13 +206,13 @@ class Scheduler(commands.Cog):
             await interaction.followup.send("タイムアウトしました。")
             return
 
-        time_str, channel_id, period_type, output_type, error = self.parse_schedule_input(msg.content, interaction.channel.id)
+        time_str, channel_id, period_type, output_type, split, error = self.parse_schedule_input(msg.content, interaction.channel.id)
         if error:
             await interaction.followup.send(error)
             return
 
         try:
-            await db.update_schedule(interaction.guild.id, schedule_id, time_str, channel_id, period_type, output_type)
+            await db.update_schedule(interaction.guild.id, schedule_id, time_str, channel_id, period_type, output_type, split)
             await self.reload_schedules()
             await interaction.followup.send(f"スケジュールID {schedule_id} を更新しました。")
         except Exception as e:
@@ -213,7 +223,7 @@ class Scheduler(commands.Cog):
         msg = """
 **schedule コマンドの使い方**
 `/schedule show` : 現在登録されているスケジュールの一覧を表示します。
-`/schedule add` : 新しいスケジュールを登録します。対話形式で `時間 チャンネル 期間 形式` を入力します。
+`/schedule add` : 新しいスケジュールを登録します。対話形式で `時間 チャンネル 期間 形式 [分割]` を入力します。
 `/schedule edit schedule_id` : 指定したIDのスケジュールを変更します。
 `/schedule enable schedule_id` : スケジュールを有効化します。
 `/schedule disable schedule_id` : スケジュールを無効化します。
@@ -221,11 +231,16 @@ class Scheduler(commands.Cog):
 
 **形式について**
 `table`: 見やすい表形式で出力
-`graph`: 登録ユーザー全員の推移を1つのグラフで出力
+`graph`: 登録ユーザー全員の推移をグラフで出力
+
+**分割オプション (graph形式のみ)**
+`true` (デフォルト): ランク帯に応じて自動的にグラフを分割して出力
+`false`: 全員を1枚のグラフにまとめて出力
+※ `table` 形式では分割オプションは使用できません。
 
 **入力形式の例**
 `21:00 here daily table` : 毎日21時に、このチャンネルに、日次レポートを送信します。
-※実行時に最新のランク情報を取得して表示します。当日分は「(取得時刻時点)」と表示されます。
+`21:00 here daily graph false` : 毎日21時に、全員を1枚にまとめたグラフを送信します。
 `09:30 1234567890 weekly graph` : 毎週金曜日の9:30に、指定チャンネルに週次レポートをグラフで表示します。
 `08:00 here monthly table` : 毎月1日の8:00に、月次レポートを表示します。
 """
@@ -272,6 +287,7 @@ class Scheduler(commands.Cog):
     @app_commands.describe(
         period="集計期間 (daily, weekly, monthly)",
         output_type="出力形式 (table, graph)",
+        split="グラフ分割 (True: 自動分割, False: 全員1枚) ※graph形式のみ",
         riot_id="特定のユーザーのみを表示する場合に指定 (例: Name#Tag)"
     )
     @app_commands.choices(
@@ -285,8 +301,18 @@ class Scheduler(commands.Cog):
             app_commands.Choice(name="Graph (グラフ形式)", value="graph"),
         ]
     )
-    async def report(self, interaction: discord.Interaction, period: str = "daily", output_type: str = "table", riot_id: str = None):
+    async def report(self, interaction: discord.Interaction, period: str = "daily", output_type: str = "table", split: bool = None, riot_id: str = None):
         await interaction.response.defer()
+        
+        # Validation for table + split
+        if output_type == "table" and split is not None:
+            await interaction.followup.send("表形式(table)が指定された場合、分割オプション(split)は指定できません。")
+            return
+            
+        # Default split behavior
+        if split is None:
+            split = True
+
         try:
             # Calculate days and start_date based on period
             today = date.today()
@@ -328,15 +354,23 @@ class Scheduler(commands.Cog):
                     if not user_data:
                         await interaction.followup.send("グラフ表示可能なデータがありません。")
                         return
-                    buf = generate_rank_graph(user_data, period, " (全員)")
-                    filename = "all_rank_graph.png"
-                    msg = f"**全員** のランク推移 ({period})"
-                
-                if buf:
-                    file = discord.File(fp=buf, filename=filename)
-                    await interaction.followup.send(msg, file=file)
-                else:
-                    await interaction.followup.send("グラフの生成に失敗しました。")
+
+                    # Split data into rank-based groups for readability if requested
+                    if split:
+                        groups = split_user_data_by_rank(user_data)
+                    else:
+                        groups = [user_data]
+                    
+                    for i, group_data in enumerate(groups):
+                        title_suffix = " (全員)" if len(groups) == 1 else f" (全員 - その{i+1})"
+                        buf = await asyncio.to_thread(generate_rank_graph, group_data, period, title_suffix)
+                        if buf:
+                            filename = f"all_rank_graph_{i+1}.png"
+                            msg = f"**全員** のランク推移 ({period})" + (f" [{i+1}/{len(groups)}]" if len(groups) > 1 else "")
+                            file = discord.File(fp=buf, filename=filename)
+                            await interaction.followup.send(msg, file=file)
+                        else:
+                            await interaction.followup.send(f"グラフ {i+1} の生成に失敗しました。")
                 return
 
             # --- TABLE OUTPUT (Legacy Report) ---
@@ -371,7 +405,13 @@ class Scheduler(commands.Cog):
                 data_map = {}
                 for user in users:
                     h = await db.get_rank_history(user['server_id'], user['discord_id'], user['riot_id'], start_date, today)
-                    data_map[user['riot_id']] = {x['fetch_date']: x for x in h}
+                    # Fetch Discord name
+                    member = interaction.guild.get_member(user['discord_id'])
+                    discord_name = member.display_name if member else str(user['discord_id'])
+                    data_map[user['riot_id']] = {
+                        'history': {x['fetch_date']: x for x in h},
+                        'discord_name': discord_name
+                    }
 
                 # 2. Generate Image (Sync in Thread)
                 buf = await asyncio.to_thread(self._generate_report_image_payload_impl, data_map, today, days, period)
@@ -388,16 +428,30 @@ class Scheduler(commands.Cog):
     def parse_schedule_input(self, text: str, current_channel_id: int):
         parts = text.strip().split()
         if len(parts) < 4:
-            return None, None, None, None, "入力形式が正しくありません。`時間 チャンネル 期間 形式` の順で入力してください。(例: 21:00 here daily graph)"
+            return None, None, None, None, None, "入力形式が正しくありません。`時間 チャンネル 期間 形式 [分割(true/false)]` の順で入力してください。(例: 21:00 here daily graph true)"
         
         t_str = parts[0]
         c_str = parts[1]
         p_str = parts[2].lower()
         o_str = parts[3].lower()
+        
+        # Parse split flag if provided
+        split = True
+        split_provided = False
+        if len(parts) >= 5:
+            sp_str = parts[4].lower()
+            if sp_str in ['true', 't', '1', 'yes', 'y']:
+                split = True
+                split_provided = True
+            elif sp_str in ['false', 'f', '0', 'no', 'n']:
+                split = False
+                split_provided = True
+            else:
+                return None, None, None, None, None, "分割形式は `true` または `false` を指定してください"
 
         # Validate Time
         if ':' not in t_str:
-             return None, None, None, None, "時間の形式が正しくありません (例: 21:00)"
+             return None, None, None, None, None, "時間の形式が正しくありません (例: 21:00)"
         
         # Validate Channel
         channel_id = None
@@ -410,9 +464,9 @@ class Scheduler(commands.Cog):
             if cid_str.isdigit():
                 channel_id = int(cid_str)
             else:
-                 return None, None, None, None, "チャンネルメンションの形式が正しくありません"
+                 return None, None, None, None, None, "チャンネルメンションの形式が正しくありません"
         else:
-             return None, None, None, None, "チャンネル指定が正しくありません ('here'、ID、またはチャンネル指定)"
+             return None, None, None, None, None, "チャンネル指定が正しくありません ('here'、ID、またはチャンネル指定)"
 
         # Validate Period
         period_type = "daily"
@@ -423,15 +477,19 @@ class Scheduler(commands.Cog):
         elif p_str in ['monthly', 'm']:
             period_type = "monthly"
         elif p_str.isdigit():
-             return None, None, None, None, "期間は `daily`, `weekly`, `monthly` のいずれかを指定してください"
+             return None, None, None, None, None, "期間は `daily`, `weekly`, `monthly` のいずれかを指定してください"
         else:
-             return None, None, None, None, "期間は `daily`, `weekly`, `monthly` のいずれかを指定してください"
+             return None, None, None, None, None, "期間は `daily`, `weekly`, `monthly` のいずれかを指定してください"
 
         # Validate Output Type
         if o_str not in ['table', 'graph']:
-            return None, None, None, None, "出力形式は `table` または `graph` を指定してください"
+            return None, None, None, None, None, "出力形式は `table` または `graph` を指定してください"
 
-        return t_str, channel_id, period_type, o_str, None
+        # Validate Split logic
+        if o_str == 'table' and split_provided:
+             return None, None, None, None, None, "表形式(table)が指定された場合、分割オプション(true/false)は指定できません"
+
+        return t_str, channel_id, period_type, o_str, split, None
 
     async def fetch_all_users_rank(self, backfill: bool = False, server_id: int = None):
         """Fetch current rank for all users with concurrent renewal."""
@@ -539,7 +597,7 @@ class Scheduler(commands.Cog):
         except Exception as e:
             logger.error(f"Backfill error for {rid}: {e}")
 
-    async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table'):
+    async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True):
         guild = self.bot.get_guild(server_id)
         guild_name = guild.name if guild else "Unknown"
         logger.info(f"Running report for server '{guild_name}' (ID: {server_id}), channel {channel_id} (type: {output_type}, period: {period_type})")
@@ -580,13 +638,23 @@ class Scheduler(commands.Cog):
                     await channel.send(f"過去 {period_days} 日間のグラフデータがありません。")
                     return
 
-                # Run graph generation in thread
-                buf = await asyncio.to_thread(generate_rank_graph, user_data, period_type, " (定例レポート)")
-                if buf:
-                    file = discord.File(fp=buf, filename="scheduled_graph.png")
-                    await channel.send(content=f"**定期レポート ({period_type})**", file=file)
+                # Split data into rank-based groups for readability if requested
+                if split:
+                    groups = split_user_data_by_rank(user_data)
                 else:
-                    await channel.send("グラフの生成に失敗しました。")
+                    groups = [user_data]
+                
+                for i, group_data in enumerate(groups):
+                    title_suffix = " (定例レポート)" if len(groups) == 1 else f" (定例レポート - その{i+1})"
+                    # Run graph generation in thread
+                    buf = await asyncio.to_thread(generate_rank_graph, group_data, period_type, title_suffix)
+                    if buf:
+                        filename = f"scheduled_graph_{i+1}.png"
+                        msg_prefix = f"**定期レポート ({period_type})**" + (f" [{i+1}/{len(groups)}]" if len(groups) > 1 else "")
+                        file = discord.File(fp=buf, filename=filename)
+                        await channel.send(content=msg_prefix, file=file)
+                    else:
+                        await channel.send(f"グラフ {i+1} の生成に失敗しました。")
             else:
                 # Image-based Table output
                 # 1. Fetch Data (Async)
@@ -594,7 +662,13 @@ class Scheduler(commands.Cog):
                 data_map = {}
                 for user in users:
                     h = await db.get_rank_history(user['server_id'], user['discord_id'], user['riot_id'], start_date, today)
-                    data_map[user['riot_id']] = {x['fetch_date']: x for x in h}
+                    # Fetch Discord name
+                    member = channel.guild.get_member(user['discord_id'])
+                    discord_name = member.display_name if member else str(user['discord_id'])
+                    data_map[user['riot_id']] = {
+                        'history': {x['fetch_date']: x for x in h},
+                        'discord_name': discord_name
+                    }
 
                 # 2. Generate Image (Sync in Thread)
                 buf = await asyncio.to_thread(self._generate_report_image_payload_impl, data_map, today, period_days, period_type)
@@ -679,7 +753,8 @@ class Scheduler(commands.Cog):
         """Generate table image for all users (Sync implementation)."""
         all_dates = set()
         
-        for user_history in data_map.values():
+        for entry in data_map.values():
+            user_history = entry['history']
             all_dates.update(user_history.keys())
             
         sorted_dates = sorted(list(all_dates))
@@ -706,8 +781,8 @@ class Scheduler(commands.Cog):
         else:
             filtered_dates = sorted_dates
 
-        # Headers: Riot ID, Recent Dates, Diff 1, Diff 2 (Period)
-        MAX_DATES_IN_IMAGE = 5
+        # Headers: Player, Recent Dates, Diff 1, Diff 2 (Period)
+        MAX_DATES_IN_IMAGE = 7
         shown_dates = filtered_dates[-MAX_DATES_IN_IMAGE:]
         
         # Comparison logic
@@ -738,11 +813,12 @@ class Scheduler(commands.Cog):
                 return ""
             
             latest_time = None
-            for hm in data_map.values():
-                entry = hm.get(d)
-                if entry and 'reg_date' in entry:
-                    if latest_time is None or entry['reg_date'] > latest_time:
-                        latest_time = entry['reg_date']
+            for entry in data_map.values():
+                hm = entry['history']
+                data_entry = hm.get(d)
+                if data_entry and 'reg_date' in data_entry:
+                    if latest_time is None or data_entry['reg_date'] > latest_time:
+                        latest_time = data_entry['reg_date']
             
             if latest_time:
                 return f"({latest_time.hour}:{latest_time.minute:02d}時点)"
@@ -766,7 +842,7 @@ class Scheduler(commands.Cog):
                 label = d.strftime("%m/%d")
                 date_headers.append(label + get_today_time_suffix(d))
             
-        headers = ["RIOT ID"] + date_headers + [diff_label, period_label]
+        headers = ["PLAYER"] + date_headers + [diff_label, period_label]
 
         def get_entry_near(h_map, target_d):
             candidates = [d for d in h_map.keys() if d <= target_d]
@@ -775,13 +851,18 @@ class Scheduler(commands.Cog):
             return h_map[best]
 
         table_data = []
-        for rid, h_map in data_map.items():
-            row = [rid.split('#')[0]]
+        for rid, entry in data_map.items():
+            h_map = entry['history']
+            d_name = entry['discord_name']
+            
+            # Format: RiotID\n(DiscordName)
+            player_cell = f"{rid.split('#')[0]}\n({d_name})"
+            row = [player_cell]
             
             # Rank for each date
             for d in shown_dates:
-                entry = h_map.get(d)
-                row.append(rank_calculator.format_rank_display(entry['tier'], entry['rank'], entry['lp']) if entry else "-")
+                h_entry = h_map.get(d)
+                row.append(rank_calculator.format_rank_display(h_entry['tier'], h_entry['rank'], h_entry['lp']) if h_entry else "-")
             
             # Diff 1 (vs Pre-defined offset)
             anchor_date = sorted_dates[-1]

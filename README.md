@@ -80,8 +80,9 @@ python src/main.py
 定期レポートの送信設定を管理します。
 
 - `/schedule add` : 新しい通知スケジュールを作成します（対話形式）。
-  - 入力形式: `時間(HH:MM) チャンネル 期間(daily/weekly/monthly) 出力形式(table/graph)`
+  - 入力形式: `時間(HH:MM) チャンネル 期間(daily/weekly/monthly) 形式(table/graph) [分割(true/false)]`
   - 例: `21:00 here daily table`
+  - 例: `21:00 here daily graph false` (グラフを1枚にまとめて表示)
 - `/schedule show` : 現在のサーバーのスケジュール一覧を表示します。
 - `/schedule edit <id>` : 既存スケジュールの設定を変更します。
 - `/schedule del <id>` : 指定 ID のスケジュールを削除します。
@@ -89,7 +90,7 @@ python src/main.py
 
 ### 分析・レポート
 - `/report` : 指定期間の集計レポート（表形式またはグラフ形式）を表示します。
-  - 引数: `period`（daily/weekly/monthly）, `output_type`（table/graph）, `riot_id`（特定ユーザーのみ表示する場合）
+  - 引数: `period`（daily/weekly/monthly）, `output_type`（table/graph）, `split`（True/False）, `riot_id`（特定ユーザーのみ表示する場合）
 - `/fetch <riot_id>` : 指定ユーザー（または `all`）の最新ランク情報を OP.GG から取得し、DB を更新します。
   - `all` を指定すると全ユーザーを並行更新します。失敗したユーザーは結果に表示されます。
 
