@@ -6,7 +6,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter, FixedLocator
-from datetime import date
+from datetime import date, timedelta
 import io
 import os
 from typing import List, Dict, Any
@@ -117,7 +117,22 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     if not user_data:
         return None
 
-    fig = Figure(figsize=(12, 7), facecolor=BG_COLOR)
+    # Calculate rank range for adaptive height
+    all_values_raw = []
+    for rows in user_data.values():
+        for r in rows:
+            all_values_raw.append(rank_to_numeric(r['tier'], r['rank'], r['lp']))
+    
+    y_min_raw = min(all_values_raw) if all_values_raw else 2400 # Default to Diamond
+    y_max_raw = max(all_values_raw) if all_values_raw else 2800
+    rank_range = y_max_raw - y_min_raw
+
+    # Adaptive Height: Increase height if the rank range is large
+    fig_h = 7
+    if rank_range > 800:
+        fig_h = 7 + min(5, (rank_range - 800) / 400) # Increases from 7 up to 12
+
+    fig = Figure(figsize=(12, fig_h), facecolor=BG_COLOR)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax.set_facecolor(BG_COLOR)
@@ -126,14 +141,14 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     all_values = []
     today_obj = date.today()
     
-    # Pre-aggregate all user data once
+    # Pre-aggregate all user data once, PRESERVING ORDER of input dict
     aggregated_data = {}
     for riot_id, rows in user_data.items():
         processed = _aggregate_rows(rows, period_type)
         if processed:
             aggregated_data[riot_id] = processed
     
-    # Draw lines
+    # Draw lines (Order is preserved from aggregated_data which follows input user_data)
     has_today = False
     latest_fetch_time = None
     label_items = []
@@ -180,17 +195,16 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 'x': last_r['fetch_date']
             })
 
-    # 1. Prepare multi-user label data and adjustment
+    # 1. Multi-user label layout adjustment (Keep them sorted by Y)
     if len(aggregated_data) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
-        # Cascade adjustment: handles any number of users by pushing them down as needed
-        THRESHOLD = 45 # Minimum vertical gap in rank points (increased for Japanese font clarity)
+        THRESHOLD = 45 
         for i in range(1, len(label_items)):
             diff = label_items[i-1]['y'] - label_items[i]['y']
             if diff < THRESHOLD:
                 label_items[i]['y'] = label_items[i-1]['y'] - THRESHOLD
         
-        # Add labels to range calculation
+        # Add adjusted label positions to range calculation
         for item in label_items:
             all_values.append(item['y'])
 
@@ -243,11 +257,19 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     ax.tick_params(axis='x', rotation=45)
 
+    # Add X-axis padding to the right for labels
+    if all_dates:
+        min_date, max_date = min(all_dates), max(all_dates)
+        date_range = (max_date - min_date).days
+        # Add about 15% padding to the right
+        padding_days = max(1, int(date_range * 0.15))
+        ax.set_xlim(min_date, max_date + timedelta(days=padding_days))
+
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
-        # Add padding (80pt) so labels aren't clipped against top/bottom spines
-        y_min = ((min_v - 80) // 100) * 100
-        y_max = ((max_v + 80) // 100 + 1) * 100
+        # Add padding (120pt for labels)
+        y_min = ((min_v - 120) // 100) * 100
+        y_max = ((max_v + 120) // 100 + 1) * 100
         
         # Apex Tier scaling
         max_tier_idx = int(max_v // 400)
@@ -257,7 +279,16 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 y_max = (max_tier_idx + 1) * 400
         ax.set_ylim(y_min, y_max)
         
-        y_ticks = list(range(int(y_min), int(y_max) + 1, 100))
+        # Dynamic Y Ticks: Show only tiers (400LP steps) if range is too large
+        tick_step = 100
+        if (y_max - y_min) > 1000:
+             tick_step = 400
+             # Align to 400LP boundaries
+             tick_start = (y_min // 400) * 400
+             y_ticks = list(range(int(tick_start), int(y_max) + 1, 400))
+        else:
+             y_ticks = list(range(int(y_min), int(y_max) + 1, 100))
+             
         y_labels = [numeric_to_rank(t) for t in y_ticks]
         
         ax.set_yticks(y_ticks)
@@ -266,13 +297,20 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     # 4. Draw labels after Y-axis setup
     if len(aggregated_data) > 1:
         for item in label_items:
-            ax.annotate(f"{item['name']}: {item['lp']}LP", (item['x'], item['y']), 
-                        textcoords="offset points", xytext=(0, 12), ha='center', 
-                        fontsize=9, color=item['color'], weight='bold')
+            # Truncate name for graph display to prevent legend collision
+            display_name = item['name']
+            if len(display_name) > 8:
+                display_name = display_name[:7] + ".."
+            
+            # Place label to the right of the point with a semi-transparent background box
+            ax.annotate(f"{display_name}\n{item['lp']}LP", (item['x'], item['y']), 
+                        textcoords="offset points", xytext=(8, 0), ha='left', va='center',
+                        fontsize=9, color=item['color'], weight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor=BG_COLOR, alpha=0.6, edgecolor='none'))
 
     if len(aggregated_data) > 1:
-        # Move legend outside the plot area to the right
-        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), 
+        # Move legend further outside the plot area to the right
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.12, 1), 
                          facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
         for text in leg.get_texts():
             text.set_color(TEXT_COLOR)
@@ -291,7 +329,7 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     if not data:
         return None
 
-    row_height = 0.6
+    row_height = 0.8 # increased for multiline support
     header_height = 0.8
     fig_height = header_height + (len(data) * row_height) + 1.2
     
@@ -318,7 +356,7 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     table.set_fontsize(12)
     
     # We will call auto_set_column_width AFTER setting padding for each cell
-    table.scale(1.0, 3.5) 
+    table.scale(1.0, 4.0) # increased scale for 2-line cells
 
     for (row, col), cell in table.get_celld().items():
         cell.set_edgecolor(HEADER_BG)

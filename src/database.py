@@ -64,6 +64,7 @@ class Database:
                 ('schedules', 'status', 'VARCHAR(50) DEFAULT \'ENABLED\''),
                 ('schedules', 'output_type', 'VARCHAR(50) DEFAULT \'table\''),
                 ('schedules', 'period_type', 'VARCHAR(20) DEFAULT \'daily\''),
+                ('schedules', 'split', 'BOOLEAN DEFAULT TRUE'),
                 ('users', 'local_id', 'INTEGER'),
                 ('schedules', 'local_id', 'INTEGER'),
             ]:
@@ -71,6 +72,12 @@ class Database:
                     await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}")
                 except Exception as e:
                     logger.warning(f"Could not add column {column} to {table}: {e}")
+
+            # 既存スケジュールの graph 出力をデフォルトで分割表示にするマイグレーション
+            try:
+                await conn.execute("UPDATE schedules SET split = TRUE WHERE output_type = 'graph' AND split IS NULL")
+            except Exception as e:
+                logger.warning(f"Could not migrate split column: {e}")
 
             # Step B: Data Normalization
             try:
@@ -169,7 +176,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, server_id, riot_id)
 
-    async def register_schedule(self, server_id: int, schedule_time, channel_id: int, created_by: int, period_type: str, output_type: str = 'table'):
+    async def register_schedule(self, server_id: int, schedule_time, channel_id: int, created_by: int, period_type: str, output_type: str = 'table', split: bool = True):
         if isinstance(schedule_time, str):
             try:
                 if len(schedule_time.split(':')) == 2:
@@ -185,11 +192,11 @@ class Database:
             max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules WHERE server_id = $1", server_id) or 0
             local_id = max_id + 1
             query = """
-            INSERT INTO schedules (server_id, schedule_time, channel_id, created_by, period_type, output_type, status, local_id, reg_date, update_date)
-            VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $8)
+            INSERT INTO schedules (server_id, schedule_time, channel_id, created_by, period_type, output_type, status, local_id, split, reg_date, update_date)
+            VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $9, $9)
             RETURNING local_id
             """
-            return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id, datetime.now())
+            return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id, split, datetime.now())
 
     async def get_all_schedules(self):
         query = "SELECT * FROM schedules ORDER BY server_id, local_id ASC"
@@ -262,7 +269,7 @@ class Database:
         for i, row in enumerate(rows, 1):
             await conn.execute("UPDATE schedules SET local_id = $1 WHERE id = $2", i, row['id'])
 
-    async def update_schedule(self, server_id: int, local_id: int, schedule_time, channel_id: int, period_type: str, output_type: str = 'table'):
+    async def update_schedule(self, server_id: int, local_id: int, schedule_time, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True):
         if isinstance(schedule_time, str):
             try:
                 if len(schedule_time.split(':')) == 2:
@@ -275,11 +282,11 @@ class Database:
 
         query = """
         UPDATE schedules 
-        SET schedule_time = $3, channel_id = $4, period_type = $5, output_type = $6, update_date = $7
+        SET schedule_time = $3, channel_id = $4, period_type = $5, output_type = $6, split = $7, update_date = $8
         WHERE server_id = $1 AND local_id = $2
         """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, output_type, datetime.now())
+            await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, output_type, split, datetime.now())
 
     async def set_schedule_status(self, server_id: int, local_id: int, status: str):
         query = """

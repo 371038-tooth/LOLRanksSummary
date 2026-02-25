@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     status VARCHAR(50) DEFAULT 'ENABLED',
     output_type VARCHAR(50) DEFAULT 'table',
     created_by BIGINT,
+    split BOOLEAN DEFAULT TRUE,
     reg_date TIMESTAMP,
     update_date TIMESTAMP
 );
