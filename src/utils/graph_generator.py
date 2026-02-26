@@ -169,12 +169,15 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         ax.plot(dates, values, color=color, linewidth=2.5, linestyle='-', marker='o', 
                 markersize=4, markerfacecolor='white', markeredgewidth=1.5, zorder=5, label=name)
         
-        # Single-user LP labels
-        if len(aggregated_data) == 1:
-            for j, r in enumerate(rows):
-                ax.annotate(f"{r['lp']}LP", (dates[j], values[j]), 
-                            textcoords="offset points", xytext=(0, 10), ha='center', 
-                            fontsize=9, color=TEXT_COLOR, alpha=0.9, weight='bold')
+        # Prepare label data for the end of the line (Now universal for all graphs)
+        last_r = rows[-1]
+        label_items.append({
+            'name': name,
+            'lp': last_r['lp'],
+            'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
+            'color': color,
+            'x': last_r['fetch_date']
+        })
 
         # Track latest fetch time for title
         for r in rows:
@@ -184,19 +187,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                     if latest_fetch_time is None or r['reg_date'] > latest_fetch_time:
                         latest_fetch_time = r['reg_date']
 
-        # Prepare multi-user label data
-        if len(aggregated_data) > 1:
-            last_r = rows[-1]
-            label_items.append({
-                'name': name,
-                'lp': last_r['lp'],
-                'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
-                'color': color,
-                'x': last_r['fetch_date']
-            })
 
-    # 1. Multi-user label layout adjustment (Keep them sorted by Y)
-    if len(aggregated_data) > 1:
+    # 1. Label layout adjustment (Keep them sorted by Y to prevent overlap)
+    if len(label_items) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
         THRESHOLD = 45 
         for i in range(1, len(label_items)):
@@ -260,10 +253,8 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     # Add X-axis padding to the right for labels
     if all_dates:
         min_date, max_date = min(all_dates), max(all_dates)
-        date_range = (max_date - min_date).days
-        # Add about 15% padding to the right
-        padding_days = max(1, int(date_range * 0.15))
-        ax.set_xlim(min_date, max_date + timedelta(days=padding_days))
+        # Set limit to max_date + 4 hours to avoid a new day tick but keep a tiny gap
+        ax.set_xlim(min_date, max_date + timedelta(hours=4))
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
@@ -294,23 +285,25 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         ax.set_yticks(y_ticks)
         ax.set_yticklabels(y_labels, fontsize=10)
 
-    # 4. Draw labels after Y-axis setup
-    if len(aggregated_data) > 1:
+    # 4. Draw labels at the end of each line
+    if label_items:
         for item in label_items:
             # Truncate name for graph display to prevent legend collision
             display_name = item['name']
-            if len(display_name) > 8:
-                display_name = display_name[:7] + ".."
+            if len(display_name) > 20:
+                display_name = display_name[:19] + ".."
             
             # Place label to the right of the point with a semi-transparent background box
+            # Place label to the right of the point. clip_on=False and bbox_inches='tight' 
+            # will ensure it doesn't get cut off despite being outside the xlim.
             ax.annotate(f"{display_name}\n{item['lp']}LP", (item['x'], item['y']), 
                         textcoords="offset points", xytext=(8, 0), ha='left', va='center',
-                        fontsize=9, color=item['color'], weight='bold',
+                        fontsize=9, color=item['color'], weight='bold', clip_on=False,
                         bbox=dict(boxstyle='round,pad=0.3', facecolor=BG_COLOR, alpha=0.6, edgecolor='none'))
 
-    if len(aggregated_data) > 1:
-        # Move legend further outside the plot area to the right
-        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.12, 1), 
+    if aggregated_data:
+        # Move legend outside the plot area to the right
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), 
                          facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
         for text in leg.get_texts():
             text.set_color(TEXT_COLOR)

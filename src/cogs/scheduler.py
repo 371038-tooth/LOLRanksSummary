@@ -81,29 +81,42 @@ class Scheduler(commands.Cog):
     async def _send_schedule_list(self, interaction: discord.Interaction):
         schedules = await db.get_schedules_by_server(interaction.guild.id)
         if not schedules:
+            msg = "このサーバーに登録されているスケジュールはありません。"
             if interaction.response.is_done():
-                await interaction.followup.send("このサーバーに登録されているスケジュールはありません。")
+                await interaction.followup.send(msg)
             else:
-                await interaction.response.send_message("このサーバーに登録されているスケジュールはありません。")
+                await interaction.response.send_message(msg)
             return
 
+        tables = [s for s in schedules if s['output_type'] == 'table']
+        graphs = [s for s in schedules if s['output_type'] == 'graph']
+
         msg = "**登録スケジュール一覧**\n"
-        for s in schedules:
-            t = s['schedule_time']
-            t_str = t.strftime("%H:%M") if hasattr(t, 'strftime') else str(t)
-            status_emoji = "✅" if s['status'] == 'ENABLED' else "❌"
-            
-            l_id = s.get('local_id', '-')
-            p_type = s.get('period_type', 'daily')
-            p_display = "日時"
-            if p_type == 'weekly': p_display = "週次"
-            elif p_type == 'monthly': p_display = "月次"
-            
-            s_display = ""
-            if s['output_type'] == 'graph':
-                s_display = " (分割)" if s.get('split', True) else " (全体)"
-                
-            msg += f"{status_emoji} ID: {l_id} | 時間: {t_str} | Ch: <#{s['channel_id']}> | 期間: {p_display} | 形式: {s['output_type']}{s_display}\n"
+        
+        if tables:
+            msg += "\n■表形式\n"
+            for s in tables:
+                t = s['schedule_time']
+                t_str = t.strftime("%H:%M") if hasattr(t, 'strftime') else str(t)
+                status_emoji = "✅" if s['status'] == 'ENABLED' else "❌"
+                l_id = s.get('local_id', '-')
+                p_display = "日時"
+                if s['period_type'] == 'weekly': p_display = "週次"
+                elif s['period_type'] == 'monthly': p_display = "月次"
+                msg += f"{status_emoji} ID: {l_id} | 時間: {t_str} | Ch: <#{s['channel_id']}> | 期間: {p_display}\n"
+
+        if graphs:
+            msg += "\n■グラフ形式\n"
+            for s in graphs:
+                t = s['schedule_time']
+                t_str = t.strftime("%H:%M") if hasattr(t, 'strftime') else str(t)
+                status_emoji = "✅" if s['status'] == 'ENABLED' else "❌"
+                l_id = s.get('local_id', '-')
+                p_display = "日時"
+                if s['period_type'] == 'weekly': p_display = "週次"
+                elif s['period_type'] == 'monthly': p_display = "月次"
+                s_display = "分割" if s.get('split', True) else "全体"
+                msg += f"{status_emoji} ID: {l_id} | 時間: {t_str} | Ch: <#{s['channel_id']}> | 期間: {p_display} | 表示形式: {s_display}\n"
         
         if interaction.response.is_done():
             await interaction.followup.send(msg)
@@ -136,10 +149,10 @@ class Scheduler(commands.Cog):
     async def schedule_add(self, interaction: discord.Interaction, output_type: str, time: str, channel: str = "here", period: str = "daily", split: bool = True):
         await interaction.response.defer()
         
-        # Validation for table + split
+        # Warning for table + split
+        warning_msg = ""
         if output_type == "table" and split is not True:
-             await interaction.followup.send("表形式(table)では、分割オプション(split)は使用できません。")
-             return
+             warning_msg = "\n⚠️ **注意**: 表形式(table)では分割設定は適用されないため、設定項目は無視されました。"
 
         # Parse channel
         channel_id = None
@@ -160,7 +173,7 @@ class Scheduler(commands.Cog):
             elif period == 'monthly': p_msg = "毎月1日"
             
             s_msg = " (分割)" if (output_type == 'graph' and split) else ""
-            await interaction.followup.send(f"スケジュール登録完了: {time} にチャンネル <#{channel_id}> へ通知 ({p_msg}, 形式: {output_type}{s_msg})")
+            await interaction.followup.send(f"スケジュール登録完了: {time} にチャンネル <#{channel_id}> へ通知 ({p_msg}, 形式: {output_type}{s_msg}){warning_msg}")
         except Exception as e:
             await interaction.followup.send(f"エラーが発生しました: {e}")
 
@@ -257,10 +270,15 @@ class Scheduler(commands.Cog):
                 await interaction.followup.send("チャンネル指定が正しくありません。")
                 return
 
+        # Warning for table + split
+        warning_msg = ""
+        if output_type == "table" and split is not None:
+             warning_msg = "\n⚠️ **注意**: 表形式(table)では分割設定は適用されないため、設定項目は無視されました。"
+
         try:
             await db.update_schedule(interaction.guild.id, schedule_id, output_type, new_time, new_channel_id, new_period, new_split)
             await self.reload_schedules()
-            await interaction.followup.send(f"{output_type}のスケジュールID {schedule_id} を更新しました。")
+            await interaction.followup.send(f"{output_type}のスケジュールID {schedule_id} を更新しました。{warning_msg}")
         except Exception as e:
             await interaction.followup.send(f"エラーが発生しました: {e}")
 
