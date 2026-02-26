@@ -14,9 +14,23 @@ class Database:
         dsn = os.getenv('DATABASE_PUBLIC_URL') or os.getenv('DATABASE_URL')
         
         if dsn:
-            self.pool = await asyncpg.create_pool(dsn)
+            # asyncpg requires 'postgresql://' scheme, some providers give 'postgres://'
+            if dsn.startswith('postgres://'):
+                dsn = dsn.replace('postgres://', 'postgresql://', 1)
+            
+            # For cloud databases (Zeabur, Railway, etc.), SSL is often required.
+            # Localhost connections usually don't use SSL.
+            if 'localhost' in dsn or '127.0.0.1' in dsn:
+                self.pool = await asyncpg.create_pool(dsn)
+            else:
+                # Try with SSL, which is standard for cloud Postgres public endpoints
+                try:
+                    self.pool = await asyncpg.create_pool(dsn, ssl='require')
+                except Exception as e:
+                    logger.warning(f"Failed to connect with SSL='require', trying without explicit SSL: {e}")
+                    self.pool = await asyncpg.create_pool(dsn)
         else:
-            # Support both 'DB_' and 'PG' prefixes (Railway uses PGxxx)
+            # Fallback for individual environment variables
             self.pool = await asyncpg.create_pool(
                 host=os.getenv('PGHOST') or os.getenv('DB_HOST', 'localhost'),
                 port=int(os.getenv('PGPORT') or os.getenv('DB_PORT', 5432)),
