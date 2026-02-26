@@ -103,11 +103,16 @@ def _aggregate_rows(rows: List[Dict[str, Any]], period_type: str) -> List[Dict[s
             months[key] = r
         rows = sorted(months.values(), key=lambda x: x['fetch_date'])
 
+    today_obj = date.today()
     latest_date = max(r['fetch_date'] for r in rows)
+    if hasattr(latest_date, 'date'): latest_date = latest_date.date()
+    
     earliest_date = min(r['fetch_date'] for r in rows)
+    if hasattr(earliest_date, 'date'): earliest_date = earliest_date.date()
+
     if earliest_date.year < latest_date.year:
         start_filter = date(latest_date.year, 1, 1)
-        rows = [r for r in rows if r['fetch_date'] >= start_filter]
+        rows = [r for r in rows if (r['fetch_date'].date() if hasattr(r['fetch_date'], 'date') else r['fetch_date']) >= start_filter]
 
     return rows
 
@@ -185,7 +190,10 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
         # Track latest fetch time for title
         for r in rows:
-            if r['fetch_date'] == today_obj:
+            f_date = r['fetch_date']
+            if hasattr(f_date, 'date'): f_date = f_date.date()
+            
+            if f_date == today_obj:
                 has_today = True
                 if 'reg_date' in r and r['reg_date'] is not None:
                     if latest_fetch_time is None or r['reg_date'] > latest_fetch_time:
@@ -256,10 +264,13 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
 
     # Add X-axis padding to the right for labels
     if all_dates:
-        min_date, max_date = min(all_dates), max(all_dates)
+        # Sort and get min/max
+        numeric_dates = [mdates.date2num(d) for d in all_dates]
+        min_d_num, max_d_num = min(numeric_dates), max(numeric_dates)
+        
         # Add internal space for labels (approx 0.8 days) 
         # without showing the next day's tick (tick is 00:00).
-        ax.set_xlim(min_date, max_date + timedelta(hours=20))
+        ax.set_xlim(min_d_num - 0.2, max_d_num + 0.85)
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
