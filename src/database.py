@@ -2,6 +2,7 @@ import logging
 import os
 import asyncpg
 from datetime import datetime, date, time
+from src.utils.time_utils import get_now_jst, get_today_jst
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ class Database:
                 # New registration, assign local_id
                 max_id = await conn.fetchval("SELECT MAX(local_id) FROM users WHERE server_id = $1", server_id) or 0
                 local_id = max_id + 1
-                now = datetime.now()
+                now = get_now_jst()
                 query = """
                 INSERT INTO users (server_id, discord_id, riot_id, puuid, local_id, reg_date, update_date)
                 VALUES ($1, $2, $3, $4, $5, $6, $6)
@@ -181,7 +182,7 @@ class Database:
                 UPDATE users SET puuid = $4, update_date = $5
                 WHERE server_id = $1 AND discord_id = $2 AND riot_id = $3
                 """
-                await conn.execute(query, server_id, discord_id, riot_id, puuid, datetime.now())
+                await conn.execute(query, server_id, discord_id, riot_id, puuid, get_now_jst())
 
     async def get_user_by_discord_id(self, server_id: int, discord_id: int):
         query = "SELECT * FROM users WHERE server_id = $1 AND discord_id = $2"
@@ -214,7 +215,7 @@ class Database:
                 VALUES ($1, $2, $3, $4, $5, 'ENABLED', $6, $7, $7)
                 RETURNING local_id
                 """
-                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, local_id, datetime.now())
+                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, local_id, get_now_jst())
             else:
                 max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules_graph WHERE server_id = $1", server_id) or 0
                 local_id = max_id + 1
@@ -223,7 +224,7 @@ class Database:
                 VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $8)
                 RETURNING local_id
                 """
-                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, split, local_id, datetime.now())
+                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, split, local_id, get_now_jst())
 
     async def get_all_schedules(self):
         async with self.pool.acquire() as conn:
@@ -240,9 +241,9 @@ class Database:
             # Maintain some sense of local_id order across both if possible, or just concat
             return sorted(combined, key=lambda x: x['local_id'])
 
-    async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date: datetime = None):
+    async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date=None):
         if reg_date is None:
-            reg_date = datetime.now()
+            reg_date = get_now_jst()
         games = wins + losses
         query = """
         INSERT INTO rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
@@ -321,14 +322,14 @@ class Database:
                 SET schedule_time = $3, channel_id = $4, period_type = $5, update_date = $6
                 WHERE server_id = $1 AND local_id = $2
                 """
-                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, datetime.now())
+                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, get_now_jst())
             else:
                 query = """
                 UPDATE schedules_graph 
                 SET schedule_time = $3, channel_id = $4, period_type = $5, split = $6, update_date = $7
                 WHERE server_id = $1 AND local_id = $2
                 """
-                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, split, datetime.now())
+                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, split, get_now_jst())
 
     async def set_schedule_status(self, server_id: int, local_id: int, output_type: str, status: str):
         async with self.pool.acquire() as conn:
@@ -338,7 +339,7 @@ class Database:
             SET status = $3, update_date = $4
             WHERE server_id = $1 AND local_id = $2
             """
-            await conn.execute(query, server_id, local_id, status, datetime.now())
+            await conn.execute(query, server_id, local_id, status, get_now_jst())
 
     async def get_schedule_by_id(self, server_id: int, local_id: int, output_type: str):
         table = "schedules_table" if output_type == 'table' else "schedules_graph"
