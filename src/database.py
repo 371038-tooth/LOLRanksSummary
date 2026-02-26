@@ -92,7 +92,11 @@ class Database:
                 
                 schedules_without_id = await conn.fetch("SELECT server_id FROM schedules WHERE local_id IS NULL GROUP BY server_id")
                 for row in schedules_without_id:
-                    await self._reindex_schedules(row['server_id'], conn)
+                    # Inline reindex for old schedules table (before migration to split tables)
+                    sid = row['server_id']
+                    sched_rows = await conn.fetch("SELECT id FROM schedules WHERE server_id = $1 ORDER BY id ASC", sid)
+                    for i, sr in enumerate(sched_rows, 1):
+                        await conn.execute("UPDATE schedules SET local_id = $1 WHERE id = $2", i, sr['id'])
 
             except Exception as e:
                 logger.warning(f"Data normalization or local_id initialization failed: {e}")
@@ -113,31 +117,42 @@ class Database:
             except Exception as e:
                 logger.warning(f"Users PK migration failed: {e}")
 
-            # Step D: Constraints Migration (rank_history)
+            # Step E: Migration to Split Schedule Tables
             try:
-                # Drop all possible old constraints
-                for constraint in [
-                    "rank_history_user_fkey", "rank_history_discord_id_fkey",
-                    "rank_history_server_id_discord_id_riot_id_fetch_date_key",
-                    "rank_history_discord_id_riot_id_fetch_date_key",
-                    "rank_history_unique_entry"
-                ]:
-                    await conn.execute(f"ALTER TABLE rank_history DROP CONSTRAINT IF EXISTS {constraint} CASCADE")
-                
-                # Re-add correct ones
-                await conn.execute("""
-                    ALTER TABLE rank_history 
-                    ADD CONSTRAINT rank_history_user_fkey 
-                    FOREIGN KEY (server_id, discord_id, riot_id) REFERENCES users(server_id, discord_id, riot_id)
-                    ON DELETE CASCADE
-                """)
-                await conn.execute("""
-                    ALTER TABLE rank_history 
-                    ADD CONSTRAINT rank_history_unique_entry 
-                    UNIQUE (server_id, discord_id, riot_id, fetch_date)
-                """)
+                # Check if old 'schedules' table exists
+                schedules_exists = await conn.fetchval("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'schedules')")
+                if schedules_exists:
+                    logger.info("Starting schedule table migration...")
+                    
+                    # Migrate to schedules_table
+                    await conn.execute("""
+                        INSERT INTO schedules_table (server_id, local_id, schedule_time, channel_id, period_type, status, created_by, reg_date, update_date)
+                        SELECT server_id, local_id, schedule_time, channel_id, period_type, status, created_by, reg_date, update_date
+                        FROM schedules WHERE output_type = 'table'
+                    """)
+                    
+                    # Migrate to schedules_graph
+                    await conn.execute("""
+                        INSERT INTO schedules_graph (server_id, local_id, schedule_time, channel_id, period_type, status, created_by, split, reg_date, update_date)
+                        SELECT server_id, local_id, schedule_time, channel_id, period_type, status, created_by, split, reg_date, update_date
+                        FROM schedules WHERE output_type = 'graph'
+                    """)
+                    
+                    # Re-index because we split them, local_id might conflict or have gaps per table
+                    table_servers = await conn.fetch("SELECT server_id FROM schedules_table GROUP BY server_id")
+                    for s in table_servers:
+                        await self._do_reindex_schedules_table(s['server_id'], conn)
+                    
+                    graph_servers = await conn.fetch("SELECT server_id FROM schedules_graph GROUP BY server_id")
+                    for s in graph_servers:
+                        await self._do_reindex_schedules_graph(s['server_id'], conn)
+
+                    # Rename old table for backup instead of deleting? User asked for migration.
+                    # Let's keep it as schedules_backup for safety if we can.
+                    await conn.execute("ALTER TABLE schedules RENAME TO schedules_old_backup")
+                    logger.info("Schedule table migration completed. Old table renamed to schedules_old_backup.")
             except Exception as e:
-                logger.warning(f"Rank history constraints migration failed: {e}")
+                logger.warning(f"Schedule table migration failed: {e}")
 
         logger.info("Database initialization and migration check completed.")
 
@@ -187,26 +202,40 @@ class Database:
             except ValueError as e:
                 raise ValueError(f"Invalid time format: {schedule_time}") from e
 
-        # We ignore period_days as it's deprecated/removed from logic
         async with self.pool.acquire() as conn:
-            max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules WHERE server_id = $1", server_id) or 0
-            local_id = max_id + 1
-            query = """
-            INSERT INTO schedules (server_id, schedule_time, channel_id, created_by, period_type, output_type, status, local_id, split, reg_date, update_date)
-            VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $9, $9)
-            RETURNING local_id
-            """
-            return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, output_type, local_id, split, datetime.now())
+            if output_type == 'table':
+                max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules_table WHERE server_id = $1", server_id) or 0
+                local_id = max_id + 1
+                query = """
+                INSERT INTO schedules_table (server_id, schedule_time, channel_id, created_by, period_type, status, local_id, reg_date, update_date)
+                VALUES ($1, $2, $3, $4, $5, 'ENABLED', $6, $7, $7)
+                RETURNING local_id
+                """
+                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, local_id, datetime.now())
+            else:
+                max_id = await conn.fetchval("SELECT MAX(local_id) FROM schedules_graph WHERE server_id = $1", server_id) or 0
+                local_id = max_id + 1
+                query = """
+                INSERT INTO schedules_graph (server_id, schedule_time, channel_id, created_by, period_type, split, status, local_id, reg_date, update_date)
+                VALUES ($1, $2, $3, $4, $5, $6, 'ENABLED', $7, $8, $8)
+                RETURNING local_id
+                """
+                return await conn.fetchval(query, server_id, schedule_time, channel_id, created_by, period_type, split, local_id, datetime.now())
 
     async def get_all_schedules(self):
-        query = "SELECT * FROM schedules ORDER BY server_id, local_id ASC"
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query)
+            tables = await conn.fetch("SELECT *, 'table' as output_type, NULL as split FROM schedules_table")
+            graphs = await conn.fetch("SELECT *, 'graph' as output_type FROM schedules_graph")
+            combined = [dict(r) for r in tables] + [dict(r) for r in graphs]
+            return combined
 
     async def get_schedules_by_server(self, server_id: int):
-        query = "SELECT * FROM schedules WHERE server_id = $1 ORDER BY local_id ASC"
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query, server_id)
+            tables = await conn.fetch("SELECT *, 'table' as output_type, NULL as split FROM schedules_table WHERE server_id = $1", server_id)
+            graphs = await conn.fetch("SELECT *, 'graph' as output_type FROM schedules_graph WHERE server_id = $1", server_id)
+            combined = [dict(r) for r in tables] + [dict(r) for r in graphs]
+            # Maintain some sense of local_id order across both if possible, or just concat
+            return sorted(combined, key=lambda x: x['local_id'])
 
     async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date: datetime = None):
         if reg_date is None:
@@ -252,24 +281,26 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, server_id)
 
-    async def delete_schedule(self, server_id: int, local_id: int):
+    async def delete_schedule(self, server_id: int, local_id: int, output_type: str):
         async with self.pool.acquire() as conn:
-            await conn.execute("DELETE FROM schedules WHERE server_id = $1 AND local_id = $2", server_id, local_id)
-            await self._reindex_schedules(server_id, conn)
+            if output_type == 'table':
+                await conn.execute("DELETE FROM schedules_table WHERE server_id = $1 AND local_id = $2", server_id, local_id)
+                await self._do_reindex_schedules_table(server_id, conn)
+            else:
+                await conn.execute("DELETE FROM schedules_graph WHERE server_id = $1 AND local_id = $2", server_id, local_id)
+                await self._do_reindex_schedules_graph(server_id, conn)
 
-    async def _reindex_schedules(self, server_id: int, conn=None):
-        if conn:
-            await self._do_reindex_schedules(server_id, conn)
-        else:
-            async with self.pool.acquire() as conn:
-                await self._do_reindex_schedules(server_id, conn)
-
-    async def _do_reindex_schedules(self, server_id: int, conn):
-        rows = await conn.fetch("SELECT id FROM schedules WHERE server_id = $1 ORDER BY id ASC", server_id)
+    async def _do_reindex_schedules_table(self, server_id: int, conn):
+        rows = await conn.fetch("SELECT id FROM schedules_table WHERE server_id = $1 ORDER BY id ASC", server_id)
         for i, row in enumerate(rows, 1):
-            await conn.execute("UPDATE schedules SET local_id = $1 WHERE id = $2", i, row['id'])
+            await conn.execute("UPDATE schedules_table SET local_id = $1 WHERE id = $2", i, row['id'])
 
-    async def update_schedule(self, server_id: int, local_id: int, schedule_time, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True):
+    async def _do_reindex_schedules_graph(self, server_id: int, conn):
+        rows = await conn.fetch("SELECT id FROM schedules_graph WHERE server_id = $1 ORDER BY id ASC", server_id)
+        for i, row in enumerate(rows, 1):
+            await conn.execute("UPDATE schedules_graph SET local_id = $1 WHERE id = $2", i, row['id'])
+
+    async def update_schedule(self, server_id: int, local_id: int, output_type: str, schedule_time, channel_id: int, period_type: str, split: bool = True):
         if isinstance(schedule_time, str):
             try:
                 if len(schedule_time.split(':')) == 2:
@@ -280,25 +311,35 @@ class Database:
             except ValueError as e:
                 raise ValueError(f"Invalid time format: {schedule_time}") from e
 
-        query = """
-        UPDATE schedules 
-        SET schedule_time = $3, channel_id = $4, period_type = $5, output_type = $6, split = $7, update_date = $8
-        WHERE server_id = $1 AND local_id = $2
-        """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, output_type, split, datetime.now())
+            if output_type == 'table':
+                query = """
+                UPDATE schedules_table 
+                SET schedule_time = $3, channel_id = $4, period_type = $5, update_date = $6
+                WHERE server_id = $1 AND local_id = $2
+                """
+                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, datetime.now())
+            else:
+                query = """
+                UPDATE schedules_graph 
+                SET schedule_time = $3, channel_id = $4, period_type = $5, split = $6, update_date = $7
+                WHERE server_id = $1 AND local_id = $2
+                """
+                await conn.execute(query, server_id, local_id, schedule_time, channel_id, period_type, split, datetime.now())
 
-    async def set_schedule_status(self, server_id: int, local_id: int, status: str):
-        query = """
-        UPDATE schedules 
-        SET status = $3, update_date = $4
-        WHERE server_id = $1 AND local_id = $2
-        """
+    async def set_schedule_status(self, server_id: int, local_id: int, output_type: str, status: str):
         async with self.pool.acquire() as conn:
+            table = "schedules_table" if output_type == 'table' else "schedules_graph"
+            query = f"""
+            UPDATE {table} 
+            SET status = $3, update_date = $4
+            WHERE server_id = $1 AND local_id = $2
+            """
             await conn.execute(query, server_id, local_id, status, datetime.now())
 
-    async def get_schedule_by_id(self, server_id: int, local_id: int):
-        query = "SELECT * FROM schedules WHERE server_id = $1 AND local_id = $2"
+    async def get_schedule_by_id(self, server_id: int, local_id: int, output_type: str):
+        table = "schedules_table" if output_type == 'table' else "schedules_graph"
+        query = f"SELECT *, '{output_type}' as output_type FROM {table} WHERE server_id = $1 AND local_id = $2"
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, server_id, local_id)
 

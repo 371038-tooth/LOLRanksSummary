@@ -79,14 +79,13 @@ python src/main.py
 ### スケジュール管理 (`/schedule`)
 定期レポートの送信設定を管理します。
 
-- `/schedule add` : 新しい通知スケジュールを作成します（対話形式）。
-  - 入力形式: `時間(HH:MM) チャンネル 期間(daily/weekly/monthly) 形式(table/graph) [分割(true/false)]`
-  - 例: `21:00 here daily table`
-  - 例: `21:00 here daily graph false` (グラフを1枚にまとめて表示)
 - `/schedule show` : 現在のサーバーのスケジュール一覧を表示します。
-- `/schedule edit <id>` : 既存スケジュールの設定を変更します。
-- `/schedule del <id>` : 指定 ID のスケジュールを削除します。
-- `/schedule enable <id>` / `/schedule disable <id>` : スケジュールの有効/無効を切り替えます。
+- `/schedule add` : 新しい通知スケジュールを作成します。
+  - 引数: `output_type` (table/graph), `time` (HH:MM), `channel` (here/ID), `period` (daily/weekly/monthly), `split` (True/False ※graphのみ)
+- `/schedule edit` : 既存スケジュールの設定を変更します。
+  - 引数: `output_type` (対象テーブルの指定), `schedule_id` (ID), `time`, `channel`, `period`, `split`
+- `/schedule del` : 指定した形式と ID のスケジュールを削除します。
+- `/schedule enable` / `/schedule disable` : スケジュールの有効/無効を切り替えます。
 
 ### 分析・レポート
 - `/report` : 指定期間の集計レポート（表形式またはグラフ形式）を表示します。
@@ -104,7 +103,8 @@ python src/main.py
 ### データベース構造
 - **users**: 登録ユーザー情報（サーバーID, Discord ID, Riot ID, PUUID）
 - **rank_history**: ランク履歴（サーバーID, Discord ID, Riot ID, Tier, Rank, LP, Wins, Losses, 取得日）
-- **schedules**: 通知設定（サーバーID, 時間, チャンネル, 期間, 形式, 有効/無効）
+- **schedules_table**: 表形式の通知設定（サーバーID, 時間, チャンネル, 期間, 有効/無効）
+- **schedules_graph**: グラフ形式の通知設定（サーバーID, 時間, チャンネル, 期間, 分割設定, 有効/無効）
 
 ※ すべてのテーブルには `server_id` が含まれ、サーバーごとにデータが隔離されています。
 

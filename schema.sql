@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS rank_history (
     UNIQUE (server_id, discord_id, riot_id, fetch_date)
 );
 
-CREATE TABLE IF NOT EXISTS schedules (
+CREATE TABLE IF NOT EXISTS schedules_table (
     id SERIAL PRIMARY KEY,
     server_id BIGINT,
     local_id INTEGER,
@@ -34,7 +34,19 @@ CREATE TABLE IF NOT EXISTS schedules (
     channel_id BIGINT NOT NULL,
     period_type VARCHAR(20) DEFAULT 'daily',
     status VARCHAR(50) DEFAULT 'ENABLED',
-    output_type VARCHAR(50) DEFAULT 'table',
+    created_by BIGINT,
+    reg_date TIMESTAMP,
+    update_date TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS schedules_graph (
+    id SERIAL PRIMARY KEY,
+    server_id BIGINT,
+    local_id INTEGER,
+    schedule_time TIME NOT NULL,
+    channel_id BIGINT NOT NULL,
+    period_type VARCHAR(20) DEFAULT 'daily',
+    status VARCHAR(50) DEFAULT 'ENABLED',
     created_by BIGINT,
     split BOOLEAN DEFAULT TRUE,
     reg_date TIMESTAMP,
