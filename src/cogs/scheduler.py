@@ -398,7 +398,8 @@ class Scheduler(commands.Cog):
                     if not user:
                         await interaction.followup.send(f"ユーザー `{riot_id}` は登録されていません。")
                         return
-                    rows = await db.get_rank_history_for_graph(interaction.guild.id, user['discord_id'], riot_id, start_date)
+                    rows = await db.get_rank_history(interaction.guild.id, user['discord_id'], riot_id, start_date, today)
+                    logger.info(f"Graph single user: {riot_id} returned {len(rows)} rows (start={start_date}, end={today})")
                     if not rows:
                         await interaction.followup.send(f"`{riot_id}` のグラフ表示用データがありません。")
                         return
@@ -413,7 +414,8 @@ class Scheduler(commands.Cog):
                         return
                     user_data = {}
                     for u in users:
-                        rows = await db.get_rank_history_for_graph(interaction.guild.id, u['discord_id'], u['riot_id'], start_date)
+                        rows = await db.get_rank_history(interaction.guild.id, u['discord_id'], u['riot_id'], start_date, today)
+                        logger.info(f"Graph all users: {u['riot_id']} returned {len(rows)} rows (start={start_date}, end={today})")
                         if rows: user_data[u['riot_id']] = [dict(r) for r in rows]
                     if not user_data:
                         await interaction.followup.send("グラフ表示可能なデータがありません。")
@@ -629,7 +631,8 @@ class Scheduler(commands.Cog):
                 start_date = today - timedelta(days=period_days)
                 user_data = {}
                 for u in users:
-                    rows = await db.get_rank_history_for_graph(u['server_id'], u['discord_id'], u['riot_id'], start_date)
+                    rows = await db.get_rank_history(u['server_id'], u['discord_id'], u['riot_id'], start_date, today)
+                    logger.info(f"Scheduled graph: {u['riot_id']} returned {len(rows)} rows (start={start_date}, end={today})")
                     if rows:
                         user_data[u['riot_id']] = [dict(r) for r in rows]
                 
