@@ -8,7 +8,8 @@ from src.utils.opgg_client import opgg_client
 from src.utils.opgg_compat import Region
 from src.utils.graph_generator import generate_rank_graph, generate_report_image
 from src.utils.graph_utils import split_user_data_by_rank
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
+from src.utils.time_utils import get_now_jst, get_today_jst
 import asyncio
 import io
 import logging
@@ -333,7 +334,7 @@ class Scheduler(commands.Cog):
             success = await self.fetch_and_save_rank(user)
             if success:
                 # Get the latest rank from DB to display
-                today = date.today()
+                today = get_today_jst()
                 history = await db.get_rank_history(user['server_id'], user['discord_id'], riot_id, today, today)
                 if history:
                     h = history[0]
@@ -379,7 +380,7 @@ class Scheduler(commands.Cog):
 
         try:
             # Calculate days and start_date based on period
-            today = date.today()
+            today = get_today_jst()
             if period == "daily":
                 days = 7
                 start_date = today - timedelta(days=7)
@@ -495,7 +496,7 @@ class Scheduler(commands.Cog):
     async def fetch_all_users_rank(self, backfill: bool = False, server_id: int = None):
         """Fetch current rank for all users with concurrent renewal."""
         logger.info(f"Starting concurrent rank collection (backfill={backfill}, server_id={server_id})...")
-        today = date.today()
+        today = get_today_jst()
         
         if server_id:
             users = await db.get_users_by_server(server_id)
@@ -623,7 +624,7 @@ class Scheduler(commands.Cog):
         # 1. Fetch latest data for all users before generating report
         await self.fetch_all_users_rank(server_id=server_id)
 
-        today = date.today()
+        today = get_today_jst()
         
         try:
             if output_type == 'graph':
@@ -687,7 +688,7 @@ class Scheduler(commands.Cog):
 
     async def fetch_and_save_rank(self, user, target_date=None, skip_renewal=False):
         if target_date is None:
-            target_date = date.today()
+            target_date = get_today_jst()
 
         discord_id = user['discord_id']
         riot_id = user['riot_id'] # Expected "Name#Tag"
@@ -713,7 +714,7 @@ class Scheduler(commands.Cog):
             # Get Rank
             tier, rank, lp, wins, losses = await opgg_client.get_rank_info(summoner)
             logger.info(f"Rank info for {riot_id}: {tier} {rank} {lp}LP (W:{wins} L:{losses})")
-            await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=datetime.now())
+            await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=get_now_jst())
             return True
         except Exception as e:
             logger.error(f"Error in fetch_and_save_rank for {riot_id}: {e}", exc_info=True)

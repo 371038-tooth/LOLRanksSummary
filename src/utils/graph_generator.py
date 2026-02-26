@@ -16,6 +16,7 @@ import logging
 logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 from src.utils import rank_calculator
+from src.utils.time_utils import get_today_jst
 
 # --- Style Constants ---
 BG_COLOR = '#0b0f19'
@@ -103,7 +104,7 @@ def _aggregate_rows(rows: List[Dict[str, Any]], period_type: str) -> List[Dict[s
             months[key] = r
         rows = sorted(months.values(), key=lambda x: x['fetch_date'])
 
-    today_obj = date.today()
+
     latest_date = max(r['fetch_date'] for r in rows)
     if hasattr(latest_date, 'date'): latest_date = latest_date.date()
     
@@ -146,7 +147,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     
     all_dates = []
     all_values = []
-    today_obj = date.today()
+    today_obj = get_today_jst()
     
     # Pre-aggregate all user data once, PRESERVING ORDER of input dict
     aggregated_data = {}
