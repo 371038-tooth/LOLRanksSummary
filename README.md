@@ -71,8 +71,9 @@ python src/main.py
 すべてのコマンドはスラッシュコマンド（`/`）として実装されています。
 
 ### ユーザー管理 (`/user`)
-- `/user add` : ユーザーを登録します（対話形式）。
-  - 入力例: `me Name#Tag`, `@User Name#Tag`
+- `/user add` : ユーザーを登録します。
+  - 引数: `riot_id` (Name#Tag または OPGGのURL), `discord_user` (任意: 表示名、ユーザー名、またはID)
+  - ※ 自分の場合は `riot_id` のみ入力、他人の場合は `discord_user` オプションを使用します。
 - `/user show` : 現在のサーバーに登録されているユーザー一覧を表示します。
 - `/user del` : 指定した ID の登録を解除します。
 

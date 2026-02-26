@@ -15,6 +15,8 @@ import logging
 # Silence matplotlib font warnings
 logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
+from src.utils import rank_calculator
+
 # --- Style Constants ---
 BG_COLOR = '#0b0f19'
 AXIS_COLOR = '#334155'
@@ -173,6 +175,8 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
         last_r = rows[-1]
         label_items.append({
             'name': name,
+            'tier': last_r['tier'],
+            'rank': last_r['rank'],
             'lp': last_r['lp'],
             'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
             'color': color,
@@ -191,7 +195,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     # 1. Label layout adjustment (Keep them sorted by Y to prevent overlap)
     if len(label_items) > 1:
         label_items.sort(key=lambda x: x['y'], reverse=True)
-        THRESHOLD = 45 
+        # THRESHOLD (in numeric rank/LP units): 70 is about 0.7 divisions.
+        # This gives enough vertical room for 2 lines of text.
+        THRESHOLD = 70 
         for i in range(1, len(label_items)):
             diff = label_items[i-1]['y'] - label_items[i]['y']
             if diff < THRESHOLD:
@@ -228,34 +234,32 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     ax.grid(True, linestyle='--', alpha=0.1, color=SECONDARY_TEXT)
 
     # Date Formatting
+    unique_dates = sorted(list(set(all_dates)))
+    if unique_dates:
+        ax.xaxis.set_major_locator(FixedLocator(mdates.date2num(unique_dates)))
+    
     if period_type == 'daily':
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-        ax.xaxis.set_major_locator(mdates.DayLocator())
-    elif period_type in ['weekly', 'monthly']:
-        unique_dates = sorted(list(set(all_dates)))
-        if unique_dates:
-            ax.xaxis.set_major_locator(FixedLocator(mdates.date2num(unique_dates)))
-        
-        if period_type == 'weekly':
-            def format_weekly(x, pos):
-                d = mdates.num2date(x)
-                week_num = (d.day - 1) // 7 + 1
-                return f"{d.month}月/{week_num}週目"
-            ax.xaxis.set_major_formatter(FuncFormatter(format_weekly))
-        else: # monthly
-            def format_monthly(x, pos):
-                d = mdates.num2date(x)
-                return f"{d.month}月"
-            ax.xaxis.set_major_formatter(FuncFormatter(format_monthly))
+    elif period_type == 'weekly':
+        def format_weekly(x, pos):
+            d = mdates.num2date(x)
+            week_num = (d.day - 1) // 7 + 1
+            return f"{d.month}月/{week_num}週目"
+        ax.xaxis.set_major_formatter(FuncFormatter(format_weekly))
+    elif period_type == 'monthly':
+        def format_monthly(x, pos):
+            d = mdates.num2date(x)
+            return f"{d.month}月"
+        ax.xaxis.set_major_formatter(FuncFormatter(format_monthly))
 
     ax.tick_params(axis='x', rotation=45)
 
     # Add X-axis padding to the right for labels
     if all_dates:
         min_date, max_date = min(all_dates), max(all_dates)
-        # Set limit to max_date + 22 hours to give space inside the axes for names 
-        # without triggering a new day tick (DayLocator ticks at 00:00).
-        ax.set_xlim(min_date, max_date + timedelta(hours=22))
+        # Add internal space for labels (approx 0.8 days) 
+        # without showing the next day's tick (tick is 00:00).
+        ax.set_xlim(min_date, max_date + timedelta(hours=20))
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
@@ -271,15 +275,12 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 y_max = (max_tier_idx + 1) * 400
         ax.set_ylim(y_min, y_max)
         
-        # Dynamic Y Ticks: Show only tiers (400LP steps) if range is too large
+        # Y Ticks: Force tiers and divisions (100LP steps) always
         tick_step = 100
-        if (y_max - y_min) > 1000:
-             tick_step = 400
-             # Align to 400LP boundaries
-             tick_start = (y_min // 400) * 400
-             y_ticks = list(range(int(tick_start), int(y_max) + 1, 400))
-        else:
-             y_ticks = list(range(int(y_min), int(y_max) + 1, 100))
+        # Align y_min and y_max to 100 units for cleaner boundaries
+        y_min_aligned = (y_min // 100) * 100
+        y_max_aligned = ((y_max // 100) + 1) * 100
+        y_ticks = list(range(int(y_min_aligned), int(y_max_aligned) + 1, tick_step))
              
         y_labels = [numeric_to_rank(t) for t in y_ticks]
         
@@ -295,16 +296,16 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 display_name = display_name[:19] + ".."
             
             # Place label to the right of the point with a semi-transparent background box
-            # Place label to the right of the point. clip_on=False and bbox_inches='tight' 
-            # will ensure it doesn't get cut off despite being outside the xlim.
-            ax.annotate(f"{display_name}\n{item['lp']}LP", (item['x'], item['y']), 
+            # Place label to the right of the point.
+            rank_label = rank_calculator.format_rank_display(item['tier'], item['rank'], item['lp'])
+            ax.annotate(f"{display_name}\n{rank_label}", (item['x'], item['y']), 
                         textcoords="offset points", xytext=(8, 0), ha='left', va='center',
                         fontsize=9, color=item['color'], weight='bold', clip_on=False,
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor=BG_COLOR, alpha=0.6, edgecolor='none'))
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor=BG_COLOR, alpha=0.7, edgecolor='none'))
 
     if aggregated_data:
         # Move legend further outside the plot area to the right to accommodate longer names
-        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.15, 1), 
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.2, 1), 
                          facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
         for text in leg.get_texts():
             text.set_color(TEXT_COLOR)

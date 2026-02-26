@@ -42,71 +42,64 @@ class Register(commands.Cog):
         await self._send_user_list(interaction)
 
     @user_group.command(name="add", description="ユーザーを登録します")
-    async def user_add(self, interaction: discord.Interaction):
-        await interaction.response.send_message("登録する対象(me, ユーザーID, または名前) と RiotID を入力してください。\n形式: `対象 RiotID(Name#Tag)`\n例: `me abc#jp1` または `1234567890 xyz#kr1`")
+    @app_commands.describe(
+        riot_id="Riot ID (Name#Tag) または OPGGのURL",
+        discord_user="対象の表示名・名前・ID (未指定または 'me' で自分を登録)"
+    )
+    async def user_add(self, interaction: discord.Interaction, riot_id: str, discord_user: str = "me"):
+        await interaction.response.defer()
 
-        def check(m):
-            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
-
-        try:
-            msg = await self.bot.wait_for('message', check=check, timeout=60.0)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("タイムアウトしました。")
-            return
-
-        parts = msg.content.strip().split()
-        if len(parts) < 2:
-            await interaction.followup.send("形式が正しくありません。`対象 RiotID` の順で入力してください。")
-            return
-
-        target_input = parts[0]
-        riot_id_input = parts[1]
-
+        # 1. Resolve Target User
         target_user = None
-        if target_input.lower() == 'me':
+        if discord_user.lower() == 'me':
             target_user = interaction.user
         else:
             guild = interaction.guild
-            if target_input.isdigit():
-                target_user = guild.get_member(int(target_input))
+            # Try ID first
+            if discord_user.isdigit():
+                target_user = guild.get_member(int(discord_user))
+            
+            # Try Name or Display Name
             if not target_user:
-                target_user = discord.utils.find(lambda m: m.name == target_input or m.display_name == target_input, guild.members)
+                target_user = discord.utils.find(
+                    lambda m: m.name == discord_user or m.display_name == discord_user, 
+                    guild.members
+                )
 
         if not target_user:
-            await interaction.followup.send(f"ユーザー '{target_input}' が見つかりませんでした。")
+            await interaction.followup.send(f"ユーザー '{discord_user}' が見つかりませんでした。表示名、またはIDを正しく入力してください。")
             return
 
-        # Parse Riot ID (similar to legacy but tailored for single prompt)
-        game_name, tag_line, error = self.parse_riot_id(riot_id_input)
+        # 2. Parse Riot ID
+        game_name, tag_line, error = self.parse_riot_id(riot_id)
         if error:
             await interaction.followup.send(error)
             return
 
-        # Validate with OPGG
+        # 3. Validate and Register
         try:
             summoner = await opgg_client.get_summoner(game_name, tag_line, Region.JP)
             if not summoner:
-                await interaction.followup.send(f"ユーザー '{game_name}#{tag_line}' が見つかりませんでした。")
+                await interaction.followup.send(f"ユーザー '{game_name}#{tag_line}' がOP.GGで見つかりませんでした。")
                 return
             
             fake_puuid = f"OPGG:{summoner.summoner_id}"
-            # Use the user-provided game_name to preserve Japanese characters
             real_riot_id = f"{game_name}#{tag_line.upper()}"
             
             await db.register_user(interaction.guild.id, target_user.id, real_riot_id, fake_puuid)
-            await interaction.followup.send(f"登録完了: {target_user.display_name} -> {real_riot_id} (サーバー: {interaction.guild.name})")
-            logger.info(f"Registered user: {target_user.display_name} -> {real_riot_id} (Server: {interaction.guild.name})")
+            await interaction.followup.send(f"✅ 登録完了: {target_user.display_name} -> **{real_riot_id}**")
+            logger.info(f"Registered user: {target_user.display_name} ({target_user.id}) -> {real_riot_id} (Server: {interaction.guild.name})")
         except Exception as e:
             logger.error(f"Error registering user: {e}", exc_info=True)
             await interaction.followup.send(f"登録エラー: {e}")
 
     @user_group.command(name="del", description="IDを指定してユーザー登録を解除します")
+    @app_commands.describe(user_id="解除するユーザーの登録ID")
     async def user_del(self, interaction: discord.Interaction, user_id: int):
         try:
             await db.delete_user_by_local_id(interaction.guild.id, user_id)
-            await interaction.response.send_message(f"登録解除完了: ID {user_id}")
+            await interaction.response.send_message(f"✅ 登録解除完了: ID {user_id}")
             logger.info(f"Deleted user by local_id: {user_id} (Server: {interaction.guild.name})")
-            # Automatically show list after deletion
             await self._send_user_list(interaction)
         except Exception as e:
             logger.error(f"Error deleting user: {e}", exc_info=True)
@@ -115,18 +108,19 @@ class Register(commands.Cog):
             else:
                 await interaction.followup.send(f"削除エラー: {e}")
 
-
     @user_group.command(name="help", description="userコマンドの使い方を表示します")
     async def user_help(self, interaction: discord.Interaction):
         msg = """
 **user コマンドの使い方**
 `/user show` : 現在登録されているユーザーの一覧を表示します。
-`/user add` : ユーザーを登録します。対話形式で `対象(me/ID/名前) RiotID` を入力します。
-`/user del user_id` : 指定した ID の登録を解除します。IDは `/user show` で確認できます。
+`/user add riot_id: [RiotID] (discord_user: [対象])` : ユーザーを登録します。
+`/user del user_id: [ID]` : 指定した ID の登録を解除します（IDは `/user show` で確認可能）。
 
-**入力形式の例**
-`me abc#jp1` : 自分の 'abc#jp1' アカウントを登録
-`1234567890 xyz#kr1` : ID 1234567890 のユーザーに 'xyz#kr1' を紐付け
+**入力例**
+- 自分の登録: `/user add riot_id: Name#Tag`
+- 他人の登録(名前): `/user add riot_id: Name#Tag discord_user: 表示名`
+- 他人の登録(ID): `/user add riot_id: Name#Tag discord_user: 1234567890`
+- URLでの登録: `/user add riot_id: https://www.op.gg/summoners/jp/Name-Tag`
 """
         await interaction.response.send_message(msg)
 
