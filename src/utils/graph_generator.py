@@ -253,8 +253,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     # Add X-axis padding to the right for labels
     if all_dates:
         min_date, max_date = min(all_dates), max(all_dates)
-        # Set limit to max_date + 4 hours to avoid a new day tick but keep a tiny gap
-        ax.set_xlim(min_date, max_date + timedelta(hours=4))
+        # Set limit to max_date + 22 hours to give space inside the axes for names 
+        # without triggering a new day tick (DayLocator ticks at 00:00).
+        ax.set_xlim(min_date, max_date + timedelta(hours=22))
 
     if all_values:
         min_v, max_v = min(all_values), max(all_values)
@@ -302,8 +303,8 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                         bbox=dict(boxstyle='round,pad=0.3', facecolor=BG_COLOR, alpha=0.6, edgecolor='none'))
 
     if aggregated_data:
-        # Move legend outside the plot area to the right
-        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), 
+        # Move legend further outside the plot area to the right to accommodate longer names
+        leg = ax.legend(loc='upper left', bbox_to_anchor=(1.15, 1), 
                          facecolor=BG_COLOR, edgecolor=AXIS_COLOR, borderaxespad=0)
         for text in leg.get_texts():
             text.set_color(TEXT_COLOR)
