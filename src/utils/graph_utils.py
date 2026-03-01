@@ -33,11 +33,15 @@ def split_user_data_by_rank(user_data: Dict[str, List[Dict[str, Any]]], max_user
     # Sort by LP descending (strongest first)
     user_latest.sort(key=lambda x: x['lp'], reverse=True)
     
+    # Separate ranked and unranked users
+    ranked_users = [u for u in user_latest if u['lp'] > 0]
+    unranked_users = [u for u in user_latest if u['lp'] <= 0]
+    
     groups = []
     current_group = {}
     group_top_lp = None
     
-    for user in user_latest:
+    for user in ranked_users:
         riot_id = user['riot_id']
         lp = user['lp']
         rows = user['rows']
@@ -60,6 +64,22 @@ def split_user_data_by_rank(user_data: Dict[str, List[Dict[str, Any]]], max_user
             
         current_group[riot_id] = rows
         
+    # Append unranked users to the very last group, or create one if none exist
+    if unranked_users:
+        if not groups:
+            # If no ranked users at all, current_group might have some unranked or be empty
+            pass
+        
+        for user in unranked_users:
+            # If the last group is already full, we might still need to split, 
+            # but the requirement says "put in the last group", suggesting it should just join even if slightly over?
+            # Let's try to stick to max_users if possible, but prioritize putting them at the end.
+            if len(current_group) >= max_users:
+                groups.append(current_group)
+                current_group = {}
+            
+            current_group[user['riot_id']] = user['rows']
+
     if current_group:
         groups.append(current_group)
         

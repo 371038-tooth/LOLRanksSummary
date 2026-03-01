@@ -198,8 +198,9 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
                 'x': last_r['fetch_date']
             })
         else:
-            # No rank data to plot, just add to legend as Unranked
-            ax.plot([], [], color=color, label=f"{name} (Unranked)")
+            # No rank data to plot, just add to legend as Unranked without a colored bar
+            # Use color='none' to hide the handle while keeping the alignment
+            ax.plot([], [], color='none', label=f"{name} (Unranked)")
 
         # Track latest fetch time for title
         for r in rows:
