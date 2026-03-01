@@ -406,9 +406,6 @@ class Scheduler(commands.Cog):
                         await interaction.followup.send("ユーザーが登録されていません。")
                         return
 
-                    # Pre-fetch current ranks once to refresh and check for missing users
-                    fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
-                    
                     user_data = {}
                     for u in users:
                         rows = await db.get_rank_history(interaction.guild.id, u['discord_id'], u['riot_id'], start_date, today)
@@ -435,15 +432,6 @@ class Scheduler(commands.Cog):
                             await interaction.followup.send(msg, file=file)
                         else:
                             await interaction.followup.send(f"グラフ {i+1} の生成に失敗しました。")
-                    
-                    # Report missing users if any (Manual fetch results)
-                    if fetch_res.get('failed_users'):
-                        failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
-                        for fu in fetch_res['failed_users']:
-                            failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
-                        failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
-                        failed_msg += "`/user del user_id:[登録ID]`"
-                        await interaction.followup.send(failed_msg)
                 return
 
             # --- TABLE OUTPUT (Legacy Report) ---
@@ -473,9 +461,6 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send("このサーバーに登録されているユーザーがいません。")
                     return
 
-                # Pre-fetch current ranks once to refresh and check for missing users
-                fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
-
                 # 1. Fetch Data (Async)
                 start_date = today - timedelta(days=days)
                 data_map = {}
@@ -497,15 +482,6 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send(f"**集計レポート ({period})**", file=file)
                 else:
                     await interaction.followup.send("レポートの生成に失敗しました。")
-
-                # Report missing users if any (Manual fetch results)
-                if fetch_res.get('failed_users'):
-                    failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
-                    for fu in fetch_res['failed_users']:
-                        failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
-                    failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
-                    failed_msg += "`/user del user_id:[登録ID]`"
-                    await interaction.followup.send(failed_msg)
         except Exception as e:
             logger.error(f"Error in report command (Server: {interaction.guild.name}): {e}", exc_info=True)
             await interaction.followup.send(f"集計出力中にエラーが発生しました: {e}")

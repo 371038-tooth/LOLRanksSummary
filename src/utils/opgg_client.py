@@ -184,13 +184,19 @@ class OPGGClient:
                 logger.debug(f"Stat {i} keys: {stat_keys}")
                 
                 # Try different ways to identify queue type
-                queue_info = stat.get('queue_info', {})
-                game_type = queue_info.get('game_type', '').upper()
+                # 1. Flat game_type (observed in recent API response)
+                game_type = stat.get('game_type', '').upper()
                 
-                # Alternative: check for queue_type key directly
+                # 2. queue_info.game_type
+                if not game_type:
+                    queue_info = stat.get('queue_info', {})
+                    game_type = queue_info.get('game_type', '').upper()
+                
+                # 3. Flat queue_type
                 if not game_type:
                     game_type = stat.get('queue_type', '').upper()
-                # Alternative: check for tier_info.queue_type
+                
+                # 4. tier_info.queue_type
                 if not game_type:
                     tier_info = stat.get('tier_info', {})
                     if isinstance(tier_info, dict):
