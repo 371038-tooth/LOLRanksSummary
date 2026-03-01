@@ -244,7 +244,7 @@ class Database:
     async def add_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date=None):
         if reg_date is None:
             reg_date = get_now_jst()
-        games = wins + losses
+        games = (wins or 0) + (losses or 0)
         query = """
         INSERT INTO rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
