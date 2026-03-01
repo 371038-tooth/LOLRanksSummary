@@ -124,14 +124,18 @@ def shorten_tier(tier: str) -> str:
         "DIAMOND": "D",
         "MASTER": "M",
         "GRANDMASTER": "GM",
-        "CHALLENGER": "C"
+        "CHALLENGER": "C",
+        "UNRANKED": "U"
     }
     return mapping.get(tier.upper(), tier[0])
 
 def format_rank_display(tier: str, rank: str, lp: int) -> str:
-    """Format rank for table cell (e.g. 'DII 21LP')."""
-    short_tier = shorten_tier(tier)
-    if tier.upper() in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
+    """Format rank for table cell (e.g. 'DII 21LP' or 'U')."""
+    tier_upper = tier.upper()
+    short_tier = shorten_tier(tier_upper)
+    if tier_upper == "UNRANKED":
+        return short_tier
+    if tier_upper in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
         return f"{short_tier} {lp}LP"
     return f"{short_tier}{rank} {lp}LP"
 

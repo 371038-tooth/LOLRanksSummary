@@ -171,9 +171,9 @@ class OPGGClient:
                     tier_info = summoner_obj['solo_tier_info']
                     logger.info(f"Found solo_tier_info directly: {tier_info}")
                     if tier_info:
-                        tier = tier_info.get('tier', 'UNRANKED').upper()
+                        tier = (tier_info.get('tier') or 'UNRANKED').upper()
                         division = tier_info.get('division') or tier_info.get('rank') or ""
-                        lp = tier_info.get('lp', 0)
+                        lp = tier_info.get('lp') or 0
                         return tier, self.division_to_roman(division), lp, 0, 0
             
             logger.info(f"Found {len(stats)} league_stats entries")
@@ -203,9 +203,9 @@ class OPGGClient:
                     tier_info = stat.get('tier_info') or stat
                     logger.info(f"tier_info keys: {list(tier_info.keys()) if isinstance(tier_info, dict) else tier_info}")
                     
-                    tier = tier_info.get('tier', 'UNRANKED').upper()
+                    tier = (tier_info.get('tier') or 'UNRANKED').upper()
                     division = tier_info.get('division') or tier_info.get('rank') or ""
-                    lp = tier_info.get('lp', 0)
+                    lp = tier_info.get('lp') or 0
                     # Try plural 'wins', 'losses' first, then 'win', 'lose'. Use None check for 0 handling.
                     wins = stat.get('wins') if stat.get('wins') is not None else stat.get('win', 0)
                     losses = stat.get('losses') if stat.get('losses') is not None else stat.get('lose', 0)
@@ -217,7 +217,7 @@ class OPGGClient:
             for i, stat in enumerate(stats):
                 tier_info = stat.get('tier_info')
                 if tier_info and isinstance(tier_info, dict):
-                    tier = tier_info.get('tier', '').upper()
+                    tier = (tier_info.get('tier') or '').upper()
                     if tier and tier != 'UNRANKED':
                         division = tier_info.get('division') or tier_info.get('rank') or ""
                         lp = tier_info.get('lp', 0)

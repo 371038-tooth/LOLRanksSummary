@@ -29,7 +29,6 @@ class Scheduler(commands.Cog):
         self.scheduler.remove_all_jobs()
         
         # 1. System-wide Rank Collection Job (Daily 23:55)
-        # Records data for the current day
         self.scheduler.add_job(
             self.fetch_all_users_rank,
             'cron',
@@ -39,41 +38,34 @@ class Scheduler(commands.Cog):
             name="daily_rank_fetch"
         )
 
-        # 2. User-defined Reporting Jobs
+        # 2. Group User-defined Reporting Jobs by Time
         schedules = await db.get_all_schedules()
+        time_groups = {} # (hour, minute, second) -> [schedules]
+
         for s in schedules:
-            sched_time = s['schedule_time']
-            channel_id = s['channel_id']
-            # period_days is valid but we prefer period_type now
-            # Legacy fallback: if period_type is missing, infer from days?
-            # DB migration ensures period_type exists (defaults to 'daily')
-            period_type = s.get('period_type', 'daily')
-            server_id = s['server_id'] or 0
-            
             if s['status'] != 'ENABLED':
                 continue
-
-            # Configure cron parameters based on period_type
-            cron_kwargs = {
-                'hour': sched_time.hour,
-                'minute': sched_time.minute,
-                'second': sched_time.second
-            }
             
-            if period_type == 'weekly':
-                cron_kwargs['day_of_week'] = 'fri'
-            elif period_type == 'monthly':
-                cron_kwargs['day'] = 1
+            sched_time = s['schedule_time']
+            time_key = (sched_time.hour, sched_time.minute, sched_time.second)
+            
+            if time_key not in time_groups:
+                time_groups[time_key] = []
+            time_groups[time_key].append(s)
 
-            split = s.get('split', True)
-
+        # Register one job per time slot
+        for (h, m, sec), group in time_groups.items():
             self.scheduler.add_job(
-                self.run_daily_report,
+                self.run_composite_report,
                 'cron',
-                args=[server_id, channel_id, period_type, s['output_type'], split],
-                **cron_kwargs
+                hour=h,
+                minute=m,
+                second=sec,
+                args=[group],
+                name=f"report_at_{h:02d}{m:02d}{sec:02d}"
             )
-        logger.info(f"Loaded {len(schedules)} reporting schedules (including Weekly/Monthly constraints).")
+
+        logger.info(f"Loaded {len(schedules)} schedules into {len(time_groups)} time-based jobs.")
 
 
     # Schedule Command Group
@@ -413,11 +405,16 @@ class Scheduler(commands.Cog):
                     if not users:
                         await interaction.followup.send("ユーザーが登録されていません。")
                         return
+                    
+                    # 0. Fetch latest data first to check for missing users
+                    fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
+                    
                     user_data = {}
                     for u in users:
                         rows = await db.get_rank_history(interaction.guild.id, u['discord_id'], u['riot_id'], start_date, today)
                         logger.info(f"Graph all users: {u['riot_id']} returned {len(rows)} rows (start={start_date}, end={today})")
                         if rows: user_data[u['riot_id']] = [dict(r) for r in rows]
+                    
                     if not user_data:
                         await interaction.followup.send("グラフ表示可能なデータがありません。")
                         return
@@ -438,6 +435,15 @@ class Scheduler(commands.Cog):
                             await interaction.followup.send(msg, file=file)
                         else:
                             await interaction.followup.send(f"グラフ {i+1} の生成に失敗しました。")
+                    
+                    # Report missing users if any
+                    if fetch_res.get('failed_users'):
+                        failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                        for fu in fetch_res['failed_users']:
+                            failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                        failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                        failed_msg += "`/user del user_id:[登録ID]`"
+                        await interaction.followup.send(failed_msg)
                 return
 
             # --- TABLE OUTPUT (Legacy Report) ---
@@ -467,6 +473,9 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send("このサーバーに登録されているユーザーがいません。")
                     return
 
+                # 0. Fetch latest data first to check for missing users
+                fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
+                
                 # 1. Fetch Data (Async)
                 start_date = today - timedelta(days=days)
                 data_map = {}
@@ -488,6 +497,15 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send(f"**集計レポート ({period})**", file=file)
                 else:
                     await interaction.followup.send("レポートの生成に失敗しました。")
+
+                # Report missing users if any
+                if fetch_res.get('failed_users'):
+                    failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                    for fu in fetch_res['failed_users']:
+                        failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                    failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                    failed_msg += "`/user del user_id:[登録ID]`"
+                    await interaction.followup.send(failed_msg)
         except Exception as e:
             logger.error(f"Error in report command (Server: {interaction.guild.name}): {e}", exc_info=True)
             await interaction.followup.send(f"集計出力中にエラーが発生しました: {e}")
@@ -503,7 +521,7 @@ class Scheduler(commands.Cog):
         else:
             users = await db.get_all_users()
         
-        results = {'total': len(users), 'success': 0, 'failed': 0}
+        results = {'total': len(users), 'success': 0, 'failed': 0, 'failed_users': []}
         
         # 1. Request Renewal for ALL users concurrently
         logger.info(f"Step 1: Requesting renewal for {len(users)} users...")
@@ -516,20 +534,20 @@ class Scheduler(commands.Cog):
         renewal_results = await asyncio.gather(*renewal_tasks, return_exceptions=True)
         
         success_users = []
-        formatted_failed_users = []
+        failed_users = []
 
         # Check renewal results
         for i, res in enumerate(renewal_results):
             user = users[i]
             if isinstance(res, Exception):
                 logger.error(f"Renewal failed for {user['riot_id']}: {res}")
-                formatted_failed_users.append(user['riot_id'])
+                failed_users.append(user)
             elif res:
                 success_users.append(user)
             else:
-                formatted_failed_users.append(user['riot_id'])
+                failed_users.append(user)
 
-        logger.info(f"Renewal requests sent. Successful: {len(success_users)}, Failed: {len(formatted_failed_users)}")
+        logger.info(f"Renewal requests sent. Successful: {len(success_users)}, Failed: {len(failed_users)}")
 
         # 2. Wait for OPGG to process renewals (10 seconds total)
         if success_users:
@@ -546,7 +564,7 @@ class Scheduler(commands.Cog):
                 if success:
                     results['success'] += 1
                 else:
-                    formatted_failed_users.append(user['riot_id'])
+                    failed_users.append(user)
                 
                 # Backfill logic (if requested)
                 if backfill and success:
@@ -555,11 +573,11 @@ class Scheduler(commands.Cog):
                 await asyncio.sleep(1) # Mild rate limit for fetching
             except Exception as e:
                 logger.error(f"Failed to fetch data for {user['riot_id']}: {e}")
-                formatted_failed_users.append(user['riot_id'])
+                failed_users.append(user)
 
         # Calculate failed count: total - success (avoids double-counting)
         results['failed'] = results['total'] - results['success']
-        results['failed_list'] = list(set(formatted_failed_users)) # unique list
+        results['failed_users'] = failed_users
 
         logger.info(f"Global rank collection completed: {results}")
         return results
@@ -599,7 +617,76 @@ class Scheduler(commands.Cog):
         except Exception as e:
             logger.error(f"Backfill error for {rid}: {e}")
 
-    async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True):
+    async def run_composite_report(self, schedules: list):
+        """Execute multiple reports sequentially with priority sorting."""
+        today = get_today_jst()
+        
+        # 1. Filter schedules that should run today
+        to_run = []
+        for s in schedules:
+            p_type = s.get('period_type', 'daily')
+            if p_type == 'daily':
+                to_run.append(s)
+            elif p_type == 'weekly' and today.weekday() == 4: # Friday
+                to_run.append(s)
+            elif p_type == 'monthly' and today.day == 1: # 1st of month
+                to_run.append(s)
+
+        if not to_run:
+            return
+
+        # 2. Priority Sorting
+        # Priority order:
+        # Table (Daily) -> Graph (Daily) -> Table (Weekly) -> Graph (Weekly) -> Table (Monthly) -> Graph (Monthly)
+        def sort_key(s):
+            p_order = {'daily': 0, 'weekly': 1, 'monthly': 2}
+            o_order = {'table': 0, 'graph': 1}
+            return (p_order.get(s.get('period_type', 'daily'), 0), o_order.get(s['output_type'], 0))
+        
+        to_run.sort(key=sort_key)
+
+        # 3. Pre-fetch rank data for all relevant servers once
+        server_ids = set(s['server_id'] or 0 for s in to_run)
+        fetching_results = {} # server_id -> results
+        for sid in server_ids:
+            if sid != 0:
+                fetching_results[sid] = await self.fetch_all_users_rank(server_id=sid)
+
+        notified_servers = set()
+
+        # 4. Sequential execution
+        for s in to_run:
+            try:
+                sid = s['server_id'] or 0
+                await self.run_daily_report(
+                    server_id=sid,
+                    channel_id=s['channel_id'],
+                    period_type=s.get('period_type', 'daily'),
+                    output_type=s['output_type'],
+                    split=s.get('split', True),
+                    skip_fetch=True
+                )
+                
+                # Report missing users if any
+                res = fetching_results.get(sid)
+                if res and res.get('failed_users') and sid not in notified_servers:
+                    failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                    for fu in res['failed_users']:
+                        failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                    failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                    failed_msg += "`/user del user_id:[登録ID]`"
+                    
+                    channel = self.bot.get_channel(s['channel_id'])
+                    if channel:
+                        await channel.send(failed_msg)
+                        notified_servers.add(sid)
+
+                # Small delay between reports to ensure Discord order and prevent rate limits
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.error(f"Error in composite report for schedule {s.get('id')}: {e}")
+
+    async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True, skip_fetch: bool = False):
         guild = self.bot.get_guild(server_id)
         guild_name = guild.name if guild else "Unknown"
         logger.info(f"Running report for server '{guild_name}' (ID: {server_id}), channel {channel_id} (type: {output_type}, period: {period_type})")
@@ -622,7 +709,8 @@ class Scheduler(commands.Cog):
             return
 
         # 1. Fetch latest data for all users before generating report
-        await self.fetch_all_users_rank(server_id=server_id)
+        if not skip_fetch:
+            await self.fetch_all_users_rank(server_id=server_id)
 
         today = get_today_jst()
         
@@ -803,13 +891,8 @@ class Scheduler(commands.Cog):
             diff_days = 30
         
         # 2. "Period Diff":
-        #    Daily -> 7-day diff (start of period)
-        #    Weekly -> 60-day diff
-        #    Monthly -> 180-day diff
+        #    Comparison across the shown period (MAX_DATES_IN_IMAGE=7)
         period_label = "期間比"
-        if period_type == 'daily': period_label = "7日比"
-        elif period_type == 'weekly': period_label = "2ヶ月比"
-        elif period_type == 'monthly': period_label = "半年比"
         
         def get_today_time_suffix(d):
             if d != today:
@@ -867,24 +950,27 @@ class Scheduler(commands.Cog):
                 h_entry = h_map.get(d)
                 row.append(rank_calculator.format_rank_display(h_entry['tier'], h_entry['rank'], h_entry['lp']) if h_entry else "-")
             
-            # Diff 1 (vs Pre-defined offset)
-            anchor_date = sorted_dates[-1]
+            # 1. Recent Diff (vs Previous data point in filtered_dates)
+            anchor_date = shown_dates[-1]
             anchor_entry = h_map.get(anchor_date)
             
-            # Find closest entry on or before target date
-            diff1_date = anchor_date - timedelta(days=diff_days)
-            
-            diff1_entry = get_entry_near(h_map, diff1_date)
             diff1_text = "-"
-            if diff1_entry and anchor_entry:
-                diff1_text = rank_calculator.calculate_diff_text(diff1_entry, anchor_entry, include_prefix=True)
+            if len(shown_dates) >= 2 and anchor_entry:
+                prev_date = shown_dates[-2]
+                prev_entry = get_entry_near(h_map, prev_date)
+                if prev_entry:
+                    diff1_text = rank_calculator.calculate_diff_text(prev_entry, anchor_entry, include_prefix=True)
             row.append(diff1_text)
             
-            # Diff 2 (Period start)
-            start_entry = get_entry_near(h_map, sorted_dates[0])
+            # 2. Period Diff (vs earliest data point in shown_dates)
+            # Compare against the start of the shown period (MAX_DATES_IN_IMAGE=7)
             period_diff_text = "-"
-            if start_entry and anchor_entry:
-                period_diff_text = rank_calculator.calculate_diff_text(start_entry, anchor_entry, include_prefix=True)
+            if anchor_entry and len(shown_dates) >= 1:
+                compare_date = shown_dates[0]
+                compare_entry = get_entry_near(h_map, compare_date)
+                
+                if compare_entry:
+                    period_diff_text = rank_calculator.calculate_diff_text(compare_entry, anchor_entry, include_prefix=True)
             row.append(period_diff_text)
             
             table_data.append(row)
