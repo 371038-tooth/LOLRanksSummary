@@ -1,17 +1,13 @@
 import unicodedata
 
-TIER_ORDER = {
-    "IRON": 0,
-    "BRONZE": 1,
-    "SILVER": 2,
-    "GOLD": 3,
-    "PLATINUM": 4,
-    "EMERALD": 5,
-    "DIAMOND": 6,
-    "MASTER": 7,
-    "GRANDMASTER": 8,
-    "CHALLENGER": 9
-}
+# TIER_ORDER for sorting and numeric conversion
+TIER_ORDER = [
+    "IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", 
+    "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"
+]
+
+# TIER_ORDER_MAP for O(1) lookups if needed
+TIER_ORDER_MAP = {tier: i for i, tier in enumerate(TIER_ORDER)}
 
 RANK_ORDER = {
     "IV": 0,
@@ -41,7 +37,7 @@ def get_total_lp(tier: str, rank: str, lp: int) -> int:
     Calculate the normalized total LP for comparison.
     """
     tier_upper = tier.upper()
-    if tier_upper not in TIER_BASE_LP:
+    if tier_upper not in TIER_ORDER:
         return 0
     
     base = TIER_BASE_LP[tier_upper]
@@ -69,7 +65,7 @@ def format_rank_diff(diff: int) -> str:
     else:
         return "±0LP"
 
-def calculate_diff_text(old_data: dict, new_data: dict, include_prefix: bool = True) -> str:
+def calculate_diff_text(old_data: dict, new_data: dict) -> str:
     """
     Calculate textual representation of rank change.
     e.g. "Tier DII⇒DI LP: +99LP" or "Tier:変化なし LP:±0LP"
@@ -106,9 +102,6 @@ def calculate_diff_text(old_data: dict, new_data: dict, include_prefix: bool = T
     if g > 0:
         rate = int((w / g) * 100)
         content += f" ({w}勝{l}敗 {rate}%)"
-
-    if not include_prefix:
-        return content
 
     return content
 

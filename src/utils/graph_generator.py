@@ -16,7 +16,10 @@ import logging
 logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 from src.utils import rank_calculator
+from src.utils.rank_calculator import TIER_ORDER
 from src.utils.time_utils import get_today_jst
+
+import matplotlib.pyplot as plt
 
 # --- Style Constants ---
 BG_COLOR = '#0b0f19'
@@ -42,11 +45,7 @@ else:
     # Fallback
     matplotlib.rcParams['font.family'] = ['Meiryo', 'MS Gothic', 'Yu Gothic', 'sans-serif']
 
-# Rank Mapping
-TIER_ORDER = [
-    "IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", 
-    "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"
-]
+# Rank Mapping (TIER_ORDER is now imported from rank_calculator)
 
 DIV_MAP = {"I": 3, "II": 2, "III": 1, "IV": 0}
 
@@ -162,8 +161,14 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     label_items = []
     
     for i, (riot_id, rows) in enumerate(aggregated_data.items()):
-        # Filter out Unranked points from the plot
-        plot_rows = [r for r in rows if r['tier'].upper() != "UNRANKED"]
+        # Filter out Unranked points and ensure only the latest entry per fetch_date is used (matching table behavior)
+        # This prevents discrepancies if multiple records exist for the same day.
+        unique_history = {}
+        for r in rows:
+            if r['tier'].upper() != "UNRANKED":
+                unique_history[r['fetch_date']] = r
+        
+        plot_rows = sorted(unique_history.values(), key=lambda x: x['fetch_date'])
         
         dates = [r['fetch_date'] for r in plot_rows]
         values = [rank_to_numeric(r['tier'], r['rank'], r['lp']) for r in plot_rows]
@@ -333,7 +338,10 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120)
     buf.seek(0)
-    del fig  # Release Figure resources to prevent memory leak
+    
+    # Release Figure resources
+    fig.clear()
+    plt.close(fig)
     return buf
 
 def generate_report_image(headers: List[str], data: List[List[Any]], title: str, col_widths: List[float] = None) -> io.BytesIO:
@@ -411,5 +419,8 @@ def generate_report_image(headers: List[str], data: List[List[Any]], title: str,
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight', transparent=False, dpi=120, facecolor=BG_COLOR)
     buf.seek(0)
-    del fig  # Release Figure resources to prevent memory leak
+    
+    # Release Figure resources
+    fig.clear()
+    plt.close(fig)
     return buf

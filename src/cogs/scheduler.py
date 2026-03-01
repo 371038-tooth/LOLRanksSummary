@@ -405,6 +405,9 @@ class Scheduler(commands.Cog):
                     if not users:
                         await interaction.followup.send("ユーザーが登録されていません。")
                         return
+
+                    # Pre-fetch current ranks once to refresh and check for missing users
+                    fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
                     
                     user_data = {}
                     for u in users:
@@ -432,6 +435,15 @@ class Scheduler(commands.Cog):
                             await interaction.followup.send(msg, file=file)
                         else:
                             await interaction.followup.send(f"グラフ {i+1} の生成に失敗しました。")
+                    
+                    # Report missing users if any (Manual fetch results)
+                    if fetch_res.get('failed_users'):
+                        failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                        for fu in fetch_res['failed_users']:
+                            failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                        failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                        failed_msg += "`/user del user_id:[登録ID]`"
+                        await interaction.followup.send(failed_msg)
                 return
 
             # --- TABLE OUTPUT (Legacy Report) ---
@@ -461,6 +473,9 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send("このサーバーに登録されているユーザーがいません。")
                     return
 
+                # Pre-fetch current ranks once to refresh and check for missing users
+                fetch_res = await self.fetch_all_users_rank(server_id=interaction.guild.id)
+
                 # 1. Fetch Data (Async)
                 start_date = today - timedelta(days=days)
                 data_map = {}
@@ -482,6 +497,15 @@ class Scheduler(commands.Cog):
                     await interaction.followup.send(f"**集計レポート ({period})**", file=file)
                 else:
                     await interaction.followup.send("レポートの生成に失敗しました。")
+
+                # Report missing users if any (Manual fetch results)
+                if fetch_res.get('failed_users'):
+                    failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                    for fu in fetch_res['failed_users']:
+                        failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                    failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                    failed_msg += "`/user del user_id:[登録ID]`"
+                    await interaction.followup.send(failed_msg)
         except Exception as e:
             logger.error(f"Error in report command (Server: {interaction.guild.name}): {e}", exc_info=True)
             await interaction.followup.send(f"集計出力中にエラーが発生しました: {e}")
@@ -628,12 +652,15 @@ class Scheduler(commands.Cog):
             if sid != 0:
                 fetching_results[sid] = await self.fetch_all_users_rank(server_id=sid)
 
-        notified_servers = set()
-
         # 4. Sequential execution
+        target_channels = {} # server_id -> set(channel_id)
         for s in to_run:
+            sid = s['server_id'] or 0
+            if sid not in target_channels:
+                target_channels[sid] = set()
+            target_channels[sid].add(s['channel_id'])
+
             try:
-                sid = s['server_id'] or 0
                 await self.run_daily_report(
                     server_id=sid,
                     channel_id=s['channel_id'],
@@ -643,24 +670,25 @@ class Scheduler(commands.Cog):
                     skip_fetch=True
                 )
                 
-                # Report missing users if any
-                res = fetching_results.get(sid)
-                if res and res.get('failed_users') and sid not in notified_servers:
-                    failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
-                    for fu in res['failed_users']:
-                        failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
-                    failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
-                    failed_msg += "`/user del user_id:[登録ID]`"
-                    
-                    channel = self.bot.get_channel(s['channel_id'])
-                    if channel:
-                        await channel.send(failed_msg)
-                        notified_servers.add(sid)
-
                 # Small delay between reports to ensure Discord order and prevent rate limits
                 await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"Error in composite report for schedule {s.get('id')}: {e}")
+
+        # 5. Report missing users once per channel after all images (Scheduled results)
+        for sid, channels in target_channels.items():
+            res = fetching_results.get(sid)
+            if res and res.get('failed_users'):
+                failed_msg = "以下のユーザーのランク情報を取得できませんでした。Riot ID が変更されたか、アカウントが削除された可能性があります。\n"
+                for fu in res['failed_users']:
+                    failed_msg += f"- {fu['riot_id']} (登録ID: {fu['local_id']})\n"
+                failed_msg += "\n古い登録を削除するには下記のコマンドを使用してください：\n"
+                failed_msg += "`/user del user_id:[登録ID]`"
+                
+                for cid in channels:
+                    channel = self.bot.get_channel(cid)
+                    if channel:
+                        await channel.send(failed_msg)
 
     async def run_daily_report(self, server_id: int, channel_id: int, period_type: str, output_type: str = 'table', split: bool = True, skip_fetch: bool = False):
         guild = self.bot.get_guild(server_id)
@@ -935,7 +963,7 @@ class Scheduler(commands.Cog):
                 prev_date = shown_dates[-2]
                 prev_entry = get_entry_near(h_map, prev_date)
                 if prev_entry:
-                    diff1_text = rank_calculator.calculate_diff_text(prev_entry, anchor_entry, include_prefix=True)
+                    diff1_text = rank_calculator.calculate_diff_text(prev_entry, anchor_entry)
             row.append(diff1_text)
             
             # 2. Period Diff (vs earliest data point in shown_dates)
@@ -946,7 +974,7 @@ class Scheduler(commands.Cog):
                 compare_entry = get_entry_near(h_map, compare_date)
                 
                 if compare_entry:
-                    period_diff_text = rank_calculator.calculate_diff_text(compare_entry, anchor_entry, include_prefix=True)
+                    period_diff_text = rank_calculator.calculate_diff_text(compare_entry, anchor_entry)
             row.append(period_diff_text)
             
             table_data.append(row)
