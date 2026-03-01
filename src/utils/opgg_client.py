@@ -143,16 +143,16 @@ class OPGGClient:
                 if resp.status == 200:
                     data = await resp.json()
                     profile_data = data.get('data', {})
-                    # Log ALL keys for debugging
-                    logger.info(f"Profile data keys: {list(profile_data.keys()) if isinstance(profile_data, dict) else 'not a dict'}")
+                    # Log ALL keys for debugging (Debug level)
+                    logger.debug(f"Profile data keys: {list(profile_data.keys()) if isinstance(profile_data, dict) else 'not a dict'}")
                     
-                    # Log summoner sub-keys if present
+                    # Log summoner sub-keys if present (Debug level)
                     if 'summoner' in profile_data:
                         summoner_data = profile_data['summoner']
-                        logger.info(f"summoner sub-keys: {list(summoner_data.keys()) if isinstance(summoner_data, dict) else summoner_data}")
+                        logger.debug(f"summoner sub-keys: {list(summoner_data.keys()) if isinstance(summoner_data, dict) else summoner_data}")
                         # Check for league_stats inside summoner
                         if 'league_stats' in summoner_data:
-                            logger.info(f"Found league_stats inside summoner object!")
+                            logger.debug("Found league_stats inside summoner object!")
 
             if not profile_data:
                 logger.warning(f"No profile_data found for summoner {summoner.summoner_id}")
@@ -179,9 +179,9 @@ class OPGGClient:
             logger.info(f"Found {len(stats)} league_stats entries")
             
             for i, stat in enumerate(stats):
-                # Log full stat structure for debugging
+                # Log full stat structure for debugging (Debug level)
                 stat_keys = list(stat.keys()) if isinstance(stat, dict) else str(stat)
-                logger.info(f"Stat {i} keys: {stat_keys}")
+                logger.debug(f"Stat {i} keys: {stat_keys}")
                 
                 # Try different ways to identify queue type
                 queue_info = stat.get('queue_info', {})
@@ -196,7 +196,7 @@ class OPGGClient:
                     if isinstance(tier_info, dict):
                         game_type = tier_info.get('queue_type', '').upper()
                 
-                logger.info(f"Stat {i}: game_type='{game_type}', tier_info={stat.get('tier_info')}")
+                logger.debug(f"Stat {i}: game_type='{game_type}', tier_info={stat.get('tier_info')}")
                 
                 # Check for various Solo Queue identifiers or just take the first ranked one
                 if game_type in ['SOLORANKED', 'RANKED_SOLO_5X5', 'SOLO']:
@@ -213,20 +213,7 @@ class OPGGClient:
                     logger.info(f"Extracted: tier={tier}, division={division}, lp={lp}, W={wins}, L={losses}")
                     return tier, self.division_to_roman(division), lp, wins, losses
             
-            # If no specific queue type was matched, try to find any ranked data
-            for i, stat in enumerate(stats):
-                tier_info = stat.get('tier_info')
-                if tier_info and isinstance(tier_info, dict):
-                    tier = (tier_info.get('tier') or '').upper()
-                    if tier and tier != 'UNRANKED':
-                        division = tier_info.get('division') or tier_info.get('rank') or ""
-                        lp = tier_info.get('lp', 0)
-                        wins = stat.get('wins') if stat.get('wins') is not None else stat.get('win', 0)
-                        losses = stat.get('losses') if stat.get('losses') is not None else stat.get('lose', 0)
-                        logger.info(f"Found ranked data in stat {i}: {tier} {division} {lp}LP (W={wins}, L={losses})")
-                        return tier, self.division_to_roman(division), lp, wins, losses
-            
-            logger.warning(f"No SOLORANKED stats found in league_stats")
+            logger.warning(f"No SOLORANKED stats found in league_stats for {summoner.summoner_id}")
             return "UNRANKED", "", 0, 0, 0
         except Exception as e:
             logger.error(f"Error fetching rank info: {e}", exc_info=True)
@@ -297,7 +284,6 @@ class OPGGClient:
         region_str = region.value.lower() if hasattr(region, 'value') else str(region).lower()
         # Use lol-api-summoner.op.gg as it's more reliable than lol-web-api.op.gg
         url = f"https://lol-api-summoner.op.gg/api/{region_str}/summoners/{summoner_id}/tier-history"
-        headers = self._headers
         try:
             logger.info(f"Fetching tier history via aiohttp: {url}")
             session = await self._get_session()
@@ -323,10 +309,10 @@ class OPGGClient:
                         updated_at = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
                     except Exception: continue
                     
-                    tier = tier_info.get('tier', 'UNRANKED').upper()
+                    tier = (tier_info.get('tier') or 'UNRANKED').upper()
                     # Some versions use 'division', others 'rank'
                     division = tier_info.get('division') or tier_info.get('rank') or ""
-                    lp = tier_info.get('lp', 0)
+                    lp = tier_info.get('lp') or 0
                     
                     results.append({
                         'tier': tier,
