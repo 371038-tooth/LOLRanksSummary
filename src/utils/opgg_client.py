@@ -212,9 +212,9 @@ class OPGGClient:
                     tier = (tier_info.get('tier') or 'UNRANKED').upper()
                     division = tier_info.get('division') or tier_info.get('rank') or ""
                     lp = tier_info.get('lp') or 0
-                    # Try plural 'wins', 'losses' first, then 'win', 'lose'. Use None check for 0 handling.
-                    wins = stat.get('wins') if stat.get('wins') is not None else stat.get('win', 0)
-                    losses = stat.get('losses') if stat.get('losses') is not None else stat.get('lose', 0)
+                    # Try plural 'wins', 'losses' first, then 'win', 'lose'. Use OR 0 for None handling.
+                    wins = (stat.get('wins') if stat.get('wins') is not None else stat.get('win')) or 0
+                    losses = (stat.get('losses') if stat.get('losses') is not None else stat.get('lose')) or 0
                     
                     logger.info(f"Extracted: tier={tier}, division={division}, lp={lp}, W={wins}, L={losses}")
                     return tier, self.division_to_roman(division), lp, wins, losses
