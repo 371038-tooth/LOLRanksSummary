@@ -162,32 +162,39 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     label_items = []
     
     for i, (riot_id, rows) in enumerate(aggregated_data.items()):
-        dates = [r['fetch_date'] for r in rows]
-        values = [rank_to_numeric(r['tier'], r['rank'], r['lp']) for r in rows]
-        all_dates.extend(dates)
+        # Filter out Unranked points from the plot
+        plot_rows = [r for r in rows if r['tier'].upper() != "UNRANKED"]
+        
+        dates = [r['fetch_date'] for r in plot_rows]
+        values = [rank_to_numeric(r['tier'], r['rank'], r['lp']) for r in plot_rows]
+        all_dates.extend([r['fetch_date'] for r in rows]) # Use all dates for X-axis
         all_values.extend(values)
         
         color = COLORS[i % len(COLORS)]
         name = riot_id.split('#')[0]
         
-        # Neon Glow Effect: Plot multiple times with different alpha and width
-        ax.plot(dates, values, color=color, linewidth=12, alpha=0.05, zorder=2)
-        ax.plot(dates, values, color=color, linewidth=8, alpha=0.1, zorder=3)
-        ax.plot(dates, values, color=color, linewidth=4, alpha=0.2, zorder=4)
-        ax.plot(dates, values, color=color, linewidth=2.5, linestyle='-', marker='o', 
-                markersize=4, markerfacecolor='white', markeredgewidth=1.5, zorder=5, label=name)
-        
-        # Prepare label data for the end of the line (Now universal for all graphs)
-        last_r = rows[-1]
-        label_items.append({
-            'name': name,
-            'tier': last_r['tier'],
-            'rank': last_r['rank'],
-            'lp': last_r['lp'],
-            'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
-            'color': color,
-            'x': last_r['fetch_date']
-        })
+        if plot_rows:
+            # Neon Glow Effect: Plot multiple times with different alpha and width
+            ax.plot(dates, values, color=color, linewidth=12, alpha=0.05, zorder=2)
+            ax.plot(dates, values, color=color, linewidth=8, alpha=0.1, zorder=3)
+            ax.plot(dates, values, color=color, linewidth=4, alpha=0.2, zorder=4)
+            ax.plot(dates, values, color=color, linewidth=2.5, linestyle='-', marker='o', 
+                    markersize=4, markerfacecolor='white', markeredgewidth=1.5, zorder=5, label=name)
+            
+            # Prepare label data for the end of the line
+            last_r = plot_rows[-1]
+            label_items.append({
+                'name': name,
+                'tier': last_r['tier'],
+                'rank': last_r['rank'],
+                'lp': last_r['lp'],
+                'y': rank_to_numeric(last_r['tier'], last_r['rank'], last_r['lp']),
+                'color': color,
+                'x': last_r['fetch_date']
+            })
+        else:
+            # No rank data to plot, just add to legend as Unranked
+            ax.plot([], [], color=color, label=f"{name} (Unranked)")
 
         # Track latest fetch time for title
         for r in rows:
@@ -230,7 +237,7 @@ def generate_rank_graph(user_data: Dict[str, List[Dict[str, Any]]], period_type:
     if has_today:
         time_display = f"{latest_fetch_time.hour}:{latest_fetch_time.minute:02d}" if latest_fetch_time else "定期実行"
         footer_text = f"※当日分のデータは、{time_display} 時点のデータです。"
-        fig.text(0.97, 0.03, footer_text, ha='right', fontsize=13, 
+        fig.text(0.98, 0.01, footer_text, ha='right', va='bottom', fontsize=11, 
                  color=TEXT_COLOR, weight='bold')
 
     ax.set_xlabel("Date", fontsize=12, color=SECONDARY_TEXT, labelpad=12)
