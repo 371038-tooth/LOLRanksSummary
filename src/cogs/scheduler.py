@@ -627,7 +627,7 @@ class Scheduler(commands.Cog):
         fetching_results = {} # server_id -> results
         for sid in server_ids:
             if sid != 0:
-                fetching_results[sid] = await self.fetch_all_users_rank(server_id=sid)
+                fetching_results[sid] = await self.fetch_all_users_rank(server_id=sid, is_final=False)
 
         # 4. Sequential execution
         target_channels = {} # server_id -> set(channel_id)
@@ -861,9 +861,6 @@ class Scheduler(commands.Cog):
 
         # Headers: Player, Recent Dates, Diff 1, Diff 2 (Period)
         MAX_DATES_IN_IMAGE = 7
-        if period_type == 'daily':
-            MAX_DATES_IN_IMAGE = 2
-            
         shown_dates = filtered_dates[-MAX_DATES_IN_IMAGE:]
         
         # 1. "Recent Diff": 
@@ -883,7 +880,10 @@ class Scheduler(commands.Cog):
         #    Comparison across the shown period (MAX_DATES_IN_IMAGE=7)
         period_label = "期間比"
         
-        def get_date_time_suffix(d):
+        def get_date_time_suffix(d, is_recent=False):
+            if not is_recent:
+                return ""
+            
             latest_time = None
             for entry in data_map.values():
                 hm = entry['history']
@@ -902,17 +902,17 @@ class Scheduler(commands.Cog):
             for d in shown_dates:
                 week_num = (d.day - 1) // 7 + 1
                 label = f"{d.month}月/{week_num}週目"
-                date_headers.append(label + get_today_time_suffix(d))
+                date_headers.append(label + get_date_time_suffix(d, is_recent=(d in shown_dates[-2:])))
         elif period_type == 'monthly':
             date_headers = []
             for d in shown_dates:
                 label = f"{d.month}月"
-                date_headers.append(label + get_today_time_suffix(d))
+                date_headers.append(label + get_date_time_suffix(d, is_recent=(d in shown_dates[-2:])))
         else:
             date_headers = []
             for d in shown_dates:
                 label = d.strftime("%m/%d")
-                date_headers.append(label + get_date_time_suffix(d))
+                date_headers.append(label + get_date_time_suffix(d, is_recent=(d in shown_dates[-2:])))
             
         headers = ["PLAYER"] + date_headers + [diff_label, period_label]
 
