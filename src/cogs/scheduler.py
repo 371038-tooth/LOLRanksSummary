@@ -35,6 +35,7 @@ class Scheduler(commands.Cog):
             hour=23,
             minute=55,
             second=0,
+            args=[False, None, True], # is_final=True
             name="daily_rank_fetch"
         )
 
@@ -487,9 +488,9 @@ class Scheduler(commands.Cog):
             await interaction.followup.send(f"集計出力中にエラーが発生しました: {e}")
 
 
-    async def fetch_all_users_rank(self, backfill: bool = False, server_id: int = None):
+    async def fetch_all_users_rank(self, backfill: bool = False, server_id: int = None, is_final: bool = False):
         """Fetch current rank for all users with concurrent renewal."""
-        logger.info(f"Starting concurrent rank collection (backfill={backfill}, server_id={server_id})...")
+        logger.info(f"Starting concurrent rank collection (backfill={backfill}, server_id={server_id}, is_final={is_final})...")
         today = get_today_jst()
         
         if server_id:
@@ -536,7 +537,7 @@ class Scheduler(commands.Cog):
         for user in success_users:
             try:
                 # Fetch without renewal (already done)
-                success = await self.fetch_and_save_rank(user, today, skip_renewal=True)
+                success = await self.fetch_and_save_rank(user, today, skip_renewal=True, is_final=is_final)
                 if success:
                     results['success'] += 1
                 else:
@@ -721,7 +722,8 @@ class Scheduler(commands.Cog):
                     buf = await asyncio.to_thread(generate_rank_graph, group_data, period_type, title_suffix)
                     if buf:
                         filename = f"scheduled_graph_{i+1}.png"
-                        msg_prefix = f"**定期レポート ({period_type})**" + (f" [{i+1}/{len(groups)}]" if len(groups) > 1 else "")
+                        title_date = today.strftime("%m/%d")
+                        msg_prefix = f"**定期レポート {title_date} ({period_type})**" + (f" [{i+1}/{len(groups)}]" if len(groups) > 1 else "")
                         file = discord.File(fp=buf, filename=filename)
                         await channel.send(content=msg_prefix, file=file)
                     else:
@@ -746,7 +748,8 @@ class Scheduler(commands.Cog):
 
                 if buf:
                     file = discord.File(fp=buf, filename="scheduled_report.png")
-                    await channel.send(content=f"**定期レポート ({period_type})**", file=file)
+                    title_date = today.strftime("%m/%d")
+                    await channel.send(content=f"**定期レポート {title_date} ({period_type})**", file=file)
                 else:
                     await channel.send("レポートの生成に失敗しました。")
 
@@ -754,7 +757,7 @@ class Scheduler(commands.Cog):
             await channel.send(f"レポート生成中にエラーが発生しました: {e}")
             logger.error(f"Error in scheduled report: {e}", exc_info=True)
 
-    async def fetch_and_save_rank(self, user, target_date=None, skip_renewal=False):
+    async def fetch_and_save_rank(self, user, target_date=None, skip_renewal=False, is_final: bool = False):
         if target_date is None:
             target_date = get_today_jst()
 
@@ -782,7 +785,11 @@ class Scheduler(commands.Cog):
             # Get Rank
             tier, rank, lp, wins, losses = await opgg_client.get_rank_info(summoner)
             logger.info(f"Rank info for {riot_id}: {tier} {rank} {lp}LP (W:{wins} L:{losses})")
-            await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=get_now_jst())
+            
+            if is_final:
+                await db.add_end_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=get_now_jst())
+            else:
+                await db.add_rank_history(user['server_id'], discord_id, riot_id, tier, rank, lp, wins, losses, target_date, reg_date=get_now_jst())
             return True
         except Exception as e:
             logger.error(f"Error in fetch_and_save_rank for {riot_id}: {e}", exc_info=True)
@@ -854,30 +861,29 @@ class Scheduler(commands.Cog):
 
         # Headers: Player, Recent Dates, Diff 1, Diff 2 (Period)
         MAX_DATES_IN_IMAGE = 7
+        if period_type == 'daily':
+            MAX_DATES_IN_IMAGE = 2
+            
         shown_dates = filtered_dates[-MAX_DATES_IN_IMAGE:]
         
-        # Comparison logic
         # 1. "Recent Diff": 
         #    Daily -> vs Yesterday (1 day ago)
         #    Weekly -> vs Last Week (7 days ago)
         #    Monthly -> vs Last Month (30 days ago)
-        diff_label = "前日比"
+        diff_label = "前回取得比"
         diff_days = 1
         if period_type == 'weekly':
-            diff_label = "前週比"
+            diff_label = "前回取得比"
             diff_days = 7
         elif period_type == 'monthly':
-            diff_label = "前月比"
+            diff_label = "前回取得比"
             diff_days = 30
         
         # 2. "Period Diff":
         #    Comparison across the shown period (MAX_DATES_IN_IMAGE=7)
         period_label = "期間比"
         
-        def get_today_time_suffix(d):
-            if d != today:
-                return ""
-            
+        def get_date_time_suffix(d):
             latest_time = None
             for entry in data_map.values():
                 hm = entry['history']
@@ -887,8 +893,8 @@ class Scheduler(commands.Cog):
                         latest_time = data_entry['reg_date']
             
             if latest_time:
-                return f"({latest_time.hour}:{latest_time.minute:02d}時点)"
-            return "(現在)"
+                return f"({latest_time.hour:02d}:{latest_time.minute:02d})"
+            return ""
 
         # Date headers based on period_type
         if period_type == 'weekly':
@@ -906,7 +912,7 @@ class Scheduler(commands.Cog):
             date_headers = []
             for d in shown_dates:
                 label = d.strftime("%m/%d")
-                date_headers.append(label + get_today_time_suffix(d))
+                date_headers.append(label + get_date_time_suffix(d))
             
         headers = ["PLAYER"] + date_headers + [diff_label, period_label]
 

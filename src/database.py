@@ -158,6 +158,40 @@ class Database:
             except Exception as e:
                 logger.warning(f"Schedule table migration failed: {e}")
 
+            # Step F: Migration for end_rank_history
+            try:
+                # 1. Ensure end_rank_history exists (already in schema.sql but just in case)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS end_rank_history (
+                        id SERIAL PRIMARY KEY,
+                        server_id BIGINT,
+                        discord_id BIGINT,
+                        riot_id VARCHAR(255),
+                        tier VARCHAR(50),
+                        rank VARCHAR(10),
+                        lp INTEGER,
+                        wins INTEGER DEFAULT 0,
+                        losses INTEGER DEFAULT 0,
+                        games INTEGER DEFAULT 0,
+                        fetch_date DATE NOT NULL,
+                        reg_date TIMESTAMP,
+                        FOREIGN KEY (server_id, discord_id, riot_id) REFERENCES users(server_id, discord_id, riot_id) ON DELETE CASCADE,
+                        UNIQUE (server_id, discord_id, riot_id, fetch_date)
+                    )
+                """)
+                
+                # 2. Check if end_rank_history is empty
+                count = await conn.fetchval("SELECT COUNT(*) FROM end_rank_history")
+                if count == 0:
+                    logger.info("Migrating data from rank_history to end_rank_history...")
+                    await conn.execute("""
+                        INSERT INTO end_rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
+                        SELECT server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date FROM rank_history
+                    """)
+                    logger.info("Rank history migration completed.")
+            except Exception as e:
+                logger.warning(f"end_rank_history migration failed: {e}")
+
         logger.info("Database initialization and migration check completed.")
 
     async def close(self):
@@ -247,6 +281,21 @@ class Database:
         games = (wins or 0) + (losses or 0)
         query = """
         INSERT INTO rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (server_id, discord_id, riot_id, fetch_date)
+        DO UPDATE SET 
+            tier = $4, rank = $5, lp = $6, wins = $7, losses = $8, games = $9, 
+            reg_date = $11
+        """
+        async with self.pool.acquire() as conn:
+            await conn.execute(query, server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
+
+    async def add_end_rank_history(self, server_id: int, discord_id: int, riot_id: str, tier: str, rank: str, lp: int, wins: int, losses: int, fetch_date: date, reg_date=None):
+        if reg_date is None:
+            reg_date = get_now_jst()
+        games = (wins or 0) + (losses or 0)
+        query = """
+        INSERT INTO end_rank_history (server_id, discord_id, riot_id, tier, rank, lp, wins, losses, games, fetch_date, reg_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (server_id, discord_id, riot_id, fetch_date)
         DO UPDATE SET 
